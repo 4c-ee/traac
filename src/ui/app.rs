@@ -207,11 +207,21 @@ fn update(state: &mut App, message: Message) -> Task<Message> {
                         elapsed, track_duration_secs, state.scrobble_sent, state.config.general.scrobble_enabled);
 
                     if !state.scrobble_sent && state.config.general.scrobble_enabled {
-                        let should_scrobble = elapsed >= 240 ||
-                        (track_duration_secs > 0 && elapsed >= track_duration_secs / 2);
+                        // Last.fm rules: scrobble at 50% duration OR 240s (4 min), whichever is LESS
+                        // For tracks < 8 min: use 50%
+                        // For tracks >= 8 min: cap at 240s
+                        let scrobble_threshold = if track_duration_secs > 0 {
+                            let half_duration = track_duration_secs / 2;
+                            let max_threshold = 240; // 4 minutes cap
+                            std::cmp::min(half_duration, max_threshold)
+                        } else {
+                            240 // fallback to 240s if no duration
+                        };
 
-                        eprintln!("Should scrobble: {} (elapsed >= 240: {}, half duration: {})", 
-                            should_scrobble, elapsed >= 240, track_duration_secs > 0 && elapsed >= track_duration_secs / 2);
+                        let should_scrobble = elapsed >= scrobble_threshold;
+
+                        eprintln!("Should scrobble: {} (elapsed={}, threshold={})", 
+                            should_scrobble, elapsed, scrobble_threshold);
 
                         if should_scrobble && state.lastfm.is_some() {
                             state.scrobble_sent = true;
