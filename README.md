@@ -2,11 +2,20 @@
 
 **traac** (no caps) (pronounced like tracy or track) is a lightweight last.fm scrobbler made for Hyprland support. Mainly a small pop-up window (as a shell overlay), with optional notification of track change via notification daemon or window itself.
 
+## Features
+
+- **System Tray Icon**: Collapses into a tray app with a visibility toggle (Show/Hide).
+- **Event-Driven Detection**: Uses MPRIS events for immediate track change and playback status updates.
+- **Last.fm Album Art**: Fetches high-quality artwork directly from Last.fm.
+- **Accurate Scrobbling**: Correctly handles pauses and resumes to ensure precise playback duration tracking.
+- **Optional Sanity Check**: Can verify tracks against Last.fm's database before submitting scrobbles.
+
 ## Tech Stack
 
 - **Language:** Rust
 - **UI:** Iced (with iced_layershell for wlroots-layer-shell support)
-- **Scrobbling:** last-fm-rs
+- **Tray Icon:** tray-icon + GTK3
+- **Scrobbling:** last-fm-rs + reqwest
 - **Track info:** mpris (D-Bus MPRIS interface)
 - **Config:** serde + toml, stored at `~/.config/traac/config.toml`
 
@@ -20,6 +29,7 @@ Squared, almost TUI-style with few borders and easy configuration via a `.config
 
 - Rust toolchain (1.88+)
 - Wayland development libraries (for iced_layershell)
+- GTK3 development libraries (for tray icon support)
 
 ### Build
 
@@ -43,7 +53,7 @@ A default config will be used if none exists. Create or edit `~/.config/traac/co
 
 - Last.fm API credentials
 - UI position and color scheme
-- Scrobbling behavior (poll interval, enable/disable)
+- Scrobbling behavior (poll interval, sanity checks)
 
 #### Configuration File Structure
 
@@ -80,8 +90,9 @@ y = 20                   # Vertical margin (pixels from edge)
 # General settings
 [general]
 scrobble_enabled = true # Enable/disable scrobbling
-poll_interval_secs = 5 # How often to check for track changes
+poll_interval_secs = 5 # Interval for scrobble progress checks
 ignored_players = [] # List of MPRIS player names to ignore (e.g., ["vlc", "firefox"])
+scrobble_sanity_check = false # Only scrobble if track is verified on Last.fm
 ```
 
 #### Configuration Options Explained
@@ -106,8 +117,9 @@ ignored_players = [] # List of MPRIS player names to ignore (e.g., ["vlc", "fire
 
 **General:**
 - `scrobble_enabled`: Toggle scrobbling on/off without removing credentials
-- `poll_interval_secs`: How frequently to poll MPRIS for track updates (default: 5)
-- `ignored_players`: List of MPRIS player names to ignore. Supports glob patterns (e.g., `["vlc", "firefox.*", "chromium.*"]`). Use `*` to match any characters in player names (useful for instances like `firefox.instance_1_1168`).
+- `poll_interval_secs`: How frequently to check scrobble progress (default: 5)
+- `ignored_players`: List of MPRIS player names to ignore. Supports glob patterns (e.g., `["vlc", "firefox.*", "chromium.*"]`). Use `*` to match any characters in player names.
+- `scrobble_sanity_check`: If true, scrobbles are only sent if the track can be found in Last.fm's metadata database.
 
 #### Getting Last.fm Credentials
 
