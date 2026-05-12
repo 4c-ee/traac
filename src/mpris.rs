@@ -41,11 +41,34 @@ impl TrackInfo {
 }
 
 pub fn find_player() -> Result<Player, String> {
+    find_player_with_ignore(&[])
+}
+
+pub fn find_player_with_ignore(ignored: &[String]) -> Result<Player, String> {
     let finder = PlayerFinder::new().map_err(|e| format!("D-Bus error: {}", e))?;
-    finder
-        .find_active()
-        .or_else(|_| finder.find_first())
-        .map_err(|e| format!("No player found: {}", e))
+    let all_players = finder
+        .find_all()
+        .map_err(|e| format!("No player found: {}", e))?;
+    
+    for player in all_players {
+        let player_name = player.identity();
+        if !ignored.iter().any(|ignored_name| {
+            ignored_name.to_lowercase() == player_name.to_lowercase()
+        }) {
+            return Ok(player);
+        }
+    }
+    
+    Err("No non-ignored player found".to_string())
+}
+
+pub fn list_all_players() -> Result<Vec<String>, String> {
+    let finder = PlayerFinder::new().map_err(|e| format!("D-Bus error: {}", e))?;
+    let all_players = finder
+        .find_all()
+        .map_err(|e| format!("No player found: {}", e))?;
+    
+    Ok(all_players.iter().map(|p| p.identity().to_string()).collect())
 }
 
 pub fn get_current_track(player: &Player) -> Option<TrackInfo> {

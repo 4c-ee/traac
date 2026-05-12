@@ -51,6 +51,7 @@ pub enum Anchor {
 pub struct GeneralConfig {
     pub scrobble_enabled: bool,
     pub poll_interval_secs: u64,
+    pub ignored_players: Vec<String>,
 }
 
 impl Default for Config {
@@ -67,10 +68,11 @@ impl Default for Config {
                 position: Position::default(),
                 show_notifications: true,
             },
-            general: GeneralConfig {
-                scrobble_enabled: true,
-                poll_interval_secs: 5,
-            },
+        general: GeneralConfig {
+            scrobble_enabled: true,
+            poll_interval_secs: 5,
+            ignored_players: vec![],
+        },
         }
     }
 }

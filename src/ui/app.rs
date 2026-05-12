@@ -1,6 +1,6 @@
 use crate::config::{Anchor, Config};
 use crate::lastfm::LastFm;
-use crate::mpris::{find_player, get_current_track, is_playing, TrackInfo};
+use crate::mpris::{find_player_with_ignore, get_current_track, is_playing, TrackInfo};
 use iced::widget::{column, container, text, button};
 use iced::{Color, Element, Length, Task};
 use iced_layershell::{
@@ -191,7 +191,7 @@ fn update(state: &mut App, message: Message) -> Task<Message> {
                 }
             }
             
-            if let Ok(player) = find_player() {
+            if let Ok(player) = find_player_with_ignore(&state.config.general.ignored_players) {
                 let track = get_current_track(&player);
                 let is_playing_flag = is_playing(&player);
 
