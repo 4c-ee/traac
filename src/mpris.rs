@@ -51,15 +51,30 @@ pub fn find_player_with_ignore(ignored: &[String]) -> Result<Player, String> {
         .map_err(|e| format!("No player found: {}", e))?;
     
     for player in all_players {
-        let player_name = player.identity();
-        if !ignored.iter().any(|ignored_name| {
-            ignored_name.to_lowercase() == player_name.to_lowercase()
-        }) {
+        if !is_player_ignored(player.identity(), player.bus_name(), ignored) {
             return Ok(player);
         }
     }
     
     Err("No non-ignored player found".to_string())
+}
+
+fn is_player_ignored(identity: &str, bus_name: &str, ignored: &[String]) -> bool {
+    let bus_name_short = bus_name.strip_prefix("org.mpris.MediaPlayer2.").unwrap_or(bus_name);
+    
+    ignored.iter().any(|pattern| {
+        if let Ok(p) = glob::Pattern::new(pattern) {
+            let options = glob::MatchOptions {
+                case_sensitive: false,
+                ..Default::default()
+            };
+            p.matches_with(identity, options) || 
+            p.matches_with(bus_name, options) || 
+            p.matches_with(bus_name_short, options)
+        } else {
+            false
+        }
+    })
 }
 
 pub fn list_all_players() -> Result<Vec<String>, String> {
@@ -69,6 +84,28 @@ pub fn list_all_players() -> Result<Vec<String>, String> {
         .map_err(|e| format!("No player found: {}", e))?;
     
     Ok(all_players.iter().map(|p| p.identity().to_string()).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_player_ignored() {
+        let ignored = vec!["vlc".to_string(), "firefox.*".to_string(), "Spotify".to_string()];
+        
+        // VLC - matches bus name short
+        assert!(is_player_ignored("VLC media player", "org.mpris.MediaPlayer2.vlc", &ignored));
+        
+        // Firefox - matches bus name short with glob
+        assert!(is_player_ignored("Firefox", "org.mpris.MediaPlayer2.firefox.instance123", &ignored));
+        
+        // Spotify - matches identity (case-insensitive)
+        assert!(is_player_ignored("spotify", "org.mpris.MediaPlayer2.spotify.other", &ignored));
+        
+        // Something else - not ignored
+        assert!(!is_player_ignored("Chromium", "org.mpris.MediaPlayer2.chromium", &ignored));
+    }
 }
 
 pub fn get_current_track(player: &Player) -> Option<TrackInfo> {

@@ -107,6 +107,7 @@ ignored_players = [] # List of MPRIS player names to ignore (e.g., ["vlc", "fire
 **General:**
 - `scrobble_enabled`: Toggle scrobbling on/off without removing credentials
 - `poll_interval_secs`: How frequently to poll MPRIS for track updates (default: 5)
+- `ignored_players`: List of MPRIS player names to ignore. Supports glob patterns (e.g., `["vlc", "firefox.*", "chromium.*"]`). Use `*` to match any characters in player names (useful for instances like `firefox.instance_1_1168`).
 
 #### Getting Last.fm Credentials
 
