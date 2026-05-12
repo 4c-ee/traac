@@ -17,6 +17,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use chrono::{DateTime, Utc};
 use notify_rust::Notification;
+use reqwest;
 
 #[to_layer_message]
 #[derive(Debug, Clone)]
@@ -35,6 +36,8 @@ pub enum Message {
     AppError(String),
     SendNotification(String, String),
     ToggleIgnore(String),
+    TrackInfoReceived(Result<crate::lastfm::Track, String>),
+    ImageBytesReceived(Result<Vec<u8>, String>),
 }
 
 pub struct App {
@@ -50,6 +53,7 @@ pub struct App {
     last_notified_track: Option<String>,
     auth_attempts: u32,
     last_auth_attempt: Option<DateTime<Utc>>,
+    track_image_bytes: Option<Vec<u8>>,
 }
 
 impl App {
@@ -84,6 +88,7 @@ impl App {
             last_notified_track: None,
             auth_attempts: 0,
             last_auth_attempt: None,
+            track_image_bytes: None,
         }
     }
 }
@@ -209,6 +214,7 @@ fn update(state: &mut App, message: Message) -> Task<Message> {
                         state.now_playing_sent = false;
                         state.scrobble_sent = false;
                         state.track_start_time = Some(Utc::now());
+                        state.track_image_bytes = None;
 
                         let mut tasks = Vec::new();
 
@@ -225,8 +231,12 @@ fn update(state: &mut App, message: Message) -> Task<Message> {
 
                         if let Some(lastfm) = state.lastfm.clone() {
                             tasks.push(Task::perform(
-                                send_now_playing(lastfm, track),
+                                send_now_playing(lastfm.clone(), track.clone()),
                                 Message::NowPlayingSent
+                            ));
+                            tasks.push(Task::perform(
+                                fetch_track_info(lastfm, track),
+                                Message::TrackInfoReceived
                             ));
                         }
 
@@ -379,8 +389,49 @@ Message::AuthSessionComplete(result) => {
             Task::none()
         }
         Message::Quit => iced::exit(),
+        Message::TrackInfoReceived(result) => {
+            match result {
+                Ok(track) => {
+                    if let Some(album) = track.album {
+                        if let Some(image) = album.image.last() {
+                            let url = image.url.clone();
+                            if !url.is_empty() {
+                                return Task::perform(fetch_image_bytes(url), Message::ImageBytesReceived);
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Track info error: {}", e);
+                }
+            }
+            Task::none()
+        }
+        Message::ImageBytesReceived(result) => {
+            match result {
+                Ok(bytes) => {
+                    state.track_image_bytes = Some(bytes);
+                }
+                Err(e) => {
+                    eprintln!("Image fetch error: {}", e);
+                }
+            }
+            Task::none()
+        }
         _ => Task::none(),
     }
+}
+
+async fn fetch_track_info(lastfm: Arc<LastFm>, track: TrackInfo) -> Result<crate::lastfm::Track, String> {
+    lastfm.get_track_info(&track.artist, &track.title)
+        .await
+        .map_err(|e| format!("Track info error: {}", e))
+}
+
+async fn fetch_image_bytes(url: String) -> Result<Vec<u8>, String> {
+    let response = reqwest::get(url).await.map_err(|e| e.to_string())?;
+    let bytes = response.bytes().await.map_err(|e| e.to_string())?;
+    Ok(bytes.to_vec())
 }
 
 async fn send_now_playing(lastfm: Arc<LastFm>, track: TrackInfo) -> Result<(), String> {
@@ -446,7 +497,13 @@ fn view(state: &App) -> Element<'_, Message> {
 
         let mut track_row = row![].spacing(10);
         
-        if let Some(art_url) = &track.art_url {
+        if let Some(bytes) = &state.track_image_bytes {
+            track_row = track_row.push(
+                image(iced::widget::image::Handle::from_bytes(bytes.clone()))
+                    .width(Length::Fixed(60.0))
+                    .height(Length::Fixed(60.0))
+            );
+        } else if let Some(art_url) = &track.art_url {
             if art_url.starts_with("file://") {
                 let path = art_url.trim_start_matches("file://");
                 track_row = track_row.push(
