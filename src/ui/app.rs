@@ -18,8 +18,6 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use notify_rust::Notification;
 
-const POLL_INTERVAL: Duration = Duration::from_secs(2);
-
 #[to_layer_message]
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -122,7 +120,7 @@ pub fn run(config_path: Option<std::path::PathBuf>) -> Result<(), Box<dyn std::e
         update,
         view,
     )
-    .subscription(|_| iced::time::every(POLL_INTERVAL).map(|_| Message::Tick))
+    .subscription(|state| iced::time::every(Duration::from_secs(state.config.general.poll_interval_secs)).map(|_| Message::Tick))
     .settings(Settings {
         layer_settings,
         ..Default::default()
