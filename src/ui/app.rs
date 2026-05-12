@@ -49,6 +49,8 @@ pub struct App {
     scrobble_sent: bool,
     track_start_time: Option<DateTime<Utc>>,
     last_notified_track: Option<String>,
+    auth_attempts: u32,
+    last_auth_attempt: Option<DateTime<Utc>>,
 }
 
 impl Default for App {
@@ -64,6 +66,8 @@ impl Default for App {
             scrobble_sent: false,
             track_start_time: None,
             last_notified_track: None,
+            auth_attempts: 0,
+            last_auth_attempt: None,
         }
     }
 }
@@ -88,7 +92,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         anchor,
         layer: Layer::Overlay,
         exclusive_zone: -1,
-        size: Some((400, 150)),
+        size: Some((450, 250)),
         margin,
         keyboard_interactivity: KeyboardInteractivity::OnDemand,
         ..Default::default()
@@ -113,6 +117,32 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 fn update(state: &mut App, message: Message) -> Task<Message> {
     match message {
         Message::Tick => {
+                if state.auth_token.is_some() && state.config.lastfm.session_key.is_none() {
+                let now = Utc::now();
+                let should_attempt = match state.last_auth_attempt {
+                    Some(last_attempt) => {
+                        (now - last_attempt).num_seconds() >= 3
+                    }
+                    None => true,
+                };
+
+                if should_attempt && state.auth_attempts < 20 {
+                    state.last_auth_attempt = Some(now);
+                    state.auth_attempts += 1;
+                    if let Some(lastfm) = state.lastfm.clone() {
+                        if let Some(token) = state.auth_token.clone() {
+                            return Task::perform(
+                                complete_authentication(lastfm, token),
+                                |result| match result {
+                                    Ok((session_key, username)) => Message::AuthSessionComplete(Ok((session_key, username))),
+                                    Err(e) => Message::AuthSessionComplete(Err(e)),
+                                }
+                            );
+                        }
+                    }
+                }
+            }
+
             if state.config.lastfm.session_key.is_none() && state.lastfm.is_none() && state.auth_url.is_none() {
                 if !state.config.lastfm.api_key.is_empty() && !state.config.lastfm.api_secret.is_empty() {
                     let lastfm = LastFm::new(
@@ -168,27 +198,34 @@ fn update(state: &mut App, message: Message) -> Task<Message> {
                                 |_| Message::NowPlayingSent
                             );
                         }
-                    } else if is_playing_flag {
-                        if let (Some(start_time), Some(track_duration)) = (state.track_start_time, track.duration) {
-                            let elapsed = Utc::now().signed_duration_since(start_time).num_seconds() as u64;
-                            let track_duration_secs = track_duration / 1000;
+} else if is_playing_flag {
+                if let (Some(start_time), Some(track_duration)) = (state.track_start_time, track.duration) {
+                    let elapsed = Utc::now().signed_duration_since(start_time).num_seconds() as u64;
+                    let track_duration_secs = track_duration / 1000;
 
-                            if !state.scrobble_sent && state.config.general.scrobble_enabled {
-                                let should_scrobble = elapsed >= 240 ||
-                                (track_duration_secs > 0 && elapsed >= track_duration_secs / 2);
+                    eprintln!("Scrobble check: elapsed={}, duration={}, scrobble_sent={}, enabled={}", 
+                        elapsed, track_duration_secs, state.scrobble_sent, state.config.general.scrobble_enabled);
 
-                                if should_scrobble && state.lastfm.is_some() {
-                                    state.scrobble_sent = true;
-                                    if let Some(lastfm) = state.lastfm.clone() {
-                                        return Task::perform(
-                                            send_scrobble(lastfm, track),
-                                            |_| Message::ScrobbleSent
-                                        );
-                                    }
-                                }
+                    if !state.scrobble_sent && state.config.general.scrobble_enabled {
+                        let should_scrobble = elapsed >= 240 ||
+                        (track_duration_secs > 0 && elapsed >= track_duration_secs / 2);
+
+                        eprintln!("Should scrobble: {} (elapsed >= 240: {}, half duration: {})", 
+                            should_scrobble, elapsed >= 240, track_duration_secs > 0 && elapsed >= track_duration_secs / 2);
+
+                        if should_scrobble && state.lastfm.is_some() {
+                            state.scrobble_sent = true;
+                            eprintln!("Sending scrobble: {} - {}", track.artist, track.title);
+                            if let Some(lastfm) = state.lastfm.clone() {
+                                return Task::perform(
+                                    send_scrobble(lastfm, track),
+                                    |_| Message::ScrobbleSent
+                                );
                             }
                         }
                     }
+                }
+            }
                 }
             }
             Task::none()
@@ -307,7 +344,12 @@ async fn get_auth_token(lastfm: Arc<LastFm>) -> Result<(last_fm_rs::AuthToken, S
 }
 
 async fn complete_authentication(lastfm: Arc<LastFm>, token: last_fm_rs::AuthToken) -> Result<(String, String), String> {
-    let session = lastfm.get_session(&token).await.map_err(|e| e.to_string())?;
+    eprintln!("Attempting to get session with token...");
+    let session = lastfm.get_session(&token).await.map_err(|e| {
+        eprintln!("get_session error: {:?}", e);
+        format!("{:?}", e)
+    })?;
+    eprintln!("Session obtained: {}", session.key);
     let session_key = session.key;
     let username = session.name;
     Ok((session_key, username))
@@ -373,22 +415,28 @@ if state.config.lastfm.session_key.is_none() {
                 );
             } else if state.auth_token.is_some() {
                 content = content
-                .push(text("Authorization required").size(12).color(bright));
+                .push(text("Authorization in progress").size(12).color(bright));
               
               if let Some(url) = &state.auth_url {
+                let attempt_msg = if state.auth_attempts > 0 {
+                    format!("Attempting auth ({}/20)...", state.auth_attempts)
+                } else {
+                    "Waiting for authorization...".to_string()
+                };
+
                 content = content
                 .push(
-                  button(text("1. Open Authorization Page"))
+                  button(text("Open Authorization Page"))
                   .on_press(Message::OpenAuthUrl(url.clone()))
                 )
                 .push(
-                  text("2. Authorize the app in your browser").size(10).color(accent_grey)
+                  text("1. Authorize the app in your browser").size(10).color(accent_grey)
                 )
                 .push(
-                  text("3. Then click the button below").size(10).color(accent_grey)
+                  text(attempt_msg).size(10).color(accent_grey)
                 )
                 .push(
-                  button(text("Complete Authorization"))
+                  button(text("Complete Manually"))
                   .on_press(Message::CompleteAuth)
                 );
               }
