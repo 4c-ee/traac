@@ -36,6 +36,7 @@ pub enum Message {
     ScrobbleSent(Result<(), String>),
     AppError(String),
     SendNotification(String, String),
+    ToggleIgnore(String),
 }
 
 pub struct App {
@@ -364,6 +365,15 @@ Message::AuthSessionComplete(result) => {
             state.error_message = Some(msg);
             Task::none()
         }
+        Message::ToggleIgnore(player_identity) => {
+            if let Some(pos) = state.config.general.ignored_players.iter().position(|p| p == &player_identity) {
+                state.config.general.ignored_players.remove(pos);
+            } else {
+                state.config.general.ignored_players.push(player_identity);
+            }
+            let _ = state.config.save();
+            Task::none()
+        }
         Message::Quit => iced::exit(),
         _ => Task::none(),
     }
@@ -445,6 +455,17 @@ fn view(state: &App) -> Element<'_, Message> {
         
         track_row = track_row.push(track_info);
         content = content.push(track_row);
+
+        if let Ok(player) = find_player_with_ignore(&[]) {
+            let identity = player.identity().to_string();
+            let is_ignored = state.config.general.ignored_players.contains(&identity);
+            
+            content = content.push(
+                button(text(if is_ignored { "Unignore Player" } else { "Ignore Player" }))
+                    .on_press(Message::ToggleIgnore(identity))
+                    .padding(5)
+            );
+        }
 
         if state.now_playing_sent {
             content = content.push(
