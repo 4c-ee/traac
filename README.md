@@ -14,8 +14,6 @@
 
 Squared, almost TUI-style with few borders and easy configuration via a `.config/` file. In-UI settings should edit that config file as well. Features heavy UI customization and feature settings.
 
-Initial UI color scheme uses the color scheme defined in `eyc.txt`, based on Catppuccin Mocha.
-
 ## Building
 
 ### Prerequisites
