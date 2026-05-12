@@ -8,6 +8,7 @@ pub struct TrackInfo {
     pub title: String,
     pub album: Option<String>,
     pub duration: Option<u64>,
+    pub art_url: Option<String>,
 }
 
 impl TrackInfo {
@@ -25,14 +26,17 @@ impl TrackInfo {
 
         let album = metadata.album_name().map(|s| s.to_string());
 
-        let duration = metadata.length_in_microseconds().map(|us| us / 1_000_000);
+    let duration = metadata.length_in_microseconds().map(|us| us / 1_000_000);
 
-        Some(Self {
-            artist,
-            title,
-            album,
-            duration,
-        })
+    let art_url = metadata.art_url().map(|s| s.to_string());
+
+    Some(Self {
+      artist,
+      title,
+      album,
+      duration,
+      art_url,
+    })
     }
 }
 
