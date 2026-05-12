@@ -111,7 +111,14 @@ impl Config {
             return Ok(Config::default());
         }
         let content = std::fs::read_to_string(&path)?;
-        toml::from_str(&content).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        match toml::from_str(&content) {
+            Ok(config) => Ok(config),
+            Err(e) => {
+                eprintln!("Warning: Failed to parse config.toml: {}", e);
+                eprintln!("         Using default configuration.");
+                Ok(Config::default())
+            }
+        }
     }
 
     pub fn save(&self) -> std::io::Result<()> {
