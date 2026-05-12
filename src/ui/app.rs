@@ -55,10 +55,27 @@ pub struct App {
 
 impl Default for App {
     fn default() -> Self {
+        let config = Config::load().unwrap_or_default();
+        let lastfm = if let (Some(session_key), api_key, api_secret) = (
+            &config.lastfm.session_key,
+            &config.lastfm.api_key,
+            &config.lastfm.api_secret,
+        ) {
+            if !api_key.is_empty() && !api_secret.is_empty() {
+                let mut lfm = LastFm::new(api_key.clone(), api_secret.clone());
+                lfm = lfm.with_session_key(session_key.clone());
+                Some(Arc::new(lfm))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         Self {
-            config: Config::load().unwrap_or_default(),
+            config,
             current_track: None,
-            lastfm: None,
+            lastfm,
             auth_token: None,
             auth_url: None,
             error_message: None,
@@ -158,6 +175,19 @@ fn update(state: &mut App, message: Message) -> Task<Message> {
                             Err(e) => Message::AuthComplete(Err(e)),
                         }
                     );
+                }
+            }
+
+            if state.config.lastfm.session_key.is_some() && state.lastfm.is_none() {
+                if !state.config.lastfm.api_key.is_empty() && !state.config.lastfm.api_secret.is_empty() {
+                    let mut lfm = LastFm::new(
+                        state.config.lastfm.api_key.clone(),
+                        state.config.lastfm.api_secret.clone()
+                    );
+                    if let Some(session_key) = &state.config.lastfm.session_key {
+                        lfm = lfm.with_session_key(session_key.clone());
+                        state.lastfm = Some(Arc::new(lfm));
+                    }
                 }
             }
             
@@ -289,8 +319,15 @@ Message::AuthSessionComplete(result) => {
             eprintln!("Auth successful! Username: {}, Session: {}", username, session_key);
             state.config.lastfm.session_key = Some(session_key.clone());
             state.config.lastfm.username = Some(username.clone());
-            match state.config.save() {
-                Ok(_) => {
+
+            let mut lfm = LastFm::new(
+                state.config.lastfm.api_key.clone(),
+                state.config.lastfm.api_secret.clone()
+            );
+            lfm = lfm.with_session_key(session_key.clone());
+            state.lastfm = Some(Arc::new(lfm));
+
+            match state.config.save() {                Ok(_) => {
                     eprintln!("Config saved successfully");
                     state.error_message = None;
                     state.auth_token = None;
