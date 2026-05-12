@@ -1,0 +1,52 @@
+traac - Expansion Points & Next Steps
+======================================
+
+IMPROVEMENTS
+-------------------------------
+- [x] **Now Playing Scrobble**: Surfaced errors in UI and improved handling.
+- [ ] **Moving to Tray App**: Make it collapse into a tray app and only show when clicked.
+- [ ] **Track change detection**: Use MPRIS `Player.events()` for event-driven track
+changes instead of polling (requires async integration with Iced).
+- [x] **Album art**: Fetch and display album art from the MPRIS art_url metadata
+field (optional, shown if available).
+- [ ] **Sanity Check**: Against last.fm before scrobbling. Should be optional.
+- [x] **User-defined ignore**: Added UI button to ignore/unignore current player.
+- [x] **Notification support**: Add optional desktop notification (via notify-rust or
+the overlay itself) when a track changes.
+- [x] **Window theming**: Use all five Catppuccin color fields from ColorScheme
+(base, slightly_lighter, accent_grey, bright, text) in the UI.
+- [x] **Error display**: Show connection errors (no player, auth failure) gracefully
+in the overlay rather than crashing.
+
+ARCHITECTURE / POLISH (Lower Priority)
+--------------------------------------
+- [ ] **Daemon mode**: Consider using `iced_layershell::daemon()` instead of
+`application()` for multi-window support (e.g., popup + settings window).
+- [x] **CLI flags**: Added --config and --debug flags using clap.
+- [x] **Logging**: Added env_logger and log crates for debug output.
+- [ ] **Packaging**: Create a release workflow, will be distributed via AUR only.
+
+COMPLETED
+------------------------------
+- [x] **Margin calculation**: The layer shell margin is set as (y, x, y, x) but may
+not visually anchor correctly for all four positions. Test and fix margin
+tuple order: it should be (top, right, bottom, left), not just x/y.
+- [x] **Anchor + margin interaction**: When anchored to e.g. BottomRight, the margin
+should offset from bottom and right edges. Currently the same x/y values are
+applied to both top/bottom and left/right. Need position-aware margin logic.
+- [x] **Config parse error handling**: If config.toml exists but is malformed, the
+app silently falls back to defaults. Log a warning or surface the error.
+- [x] **Async runtime**: last-fm-rs requires async (tokio). Iced uses its own async
+runtime. Need to ensure HTTP calls from the scrobbler don't block the UI.
+Either use `iced::Task::perform()` or spawn tasks in the update loop.
+- [x] **Review Last.fm authentication flow**: Currently, nothing happens on startup. Should open browser for auth and get session token.
+- [x] **MPRIS polling loop**: Add a subscription/poll loop in the Iced app that
+periodically checks `mpris::get_current_track()` and detects track changes.
+- [x] **Now Playing update**: On track change, call `lastfm.update_now_playing()`
+to push "now playing" to Last.fm.
+- [x] **Scrobbling**: After a track plays for >= 50% of its duration (or 4 minutes,
+per Last.fm rules), submit a scrobble via `lastfm.scrobble()`.
+- [x] **Track info in UI**: Display the current track (artist, title, album) in the
+overlay window instead of the placeholder text.
+- [x] **Config save hook**: After a successful auth, persist the new session key with
+`Config::save()`. Also save any in-app settings changes.
