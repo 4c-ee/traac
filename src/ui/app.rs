@@ -212,22 +212,28 @@ fn update(state: &mut App, message: Message) -> Task<Message> {
                         state.scrobble_sent = false;
                         state.track_start_time = Some(Utc::now());
 
+                        let mut tasks = Vec::new();
+
                         if state.config.ui.show_notifications {
                             let notification_key = format!("{} - {}", track.artist, track.title);
                             if state.last_notified_track.as_ref().map_or(true, |last| last != &notification_key) {
                                 state.last_notified_track = Some(notification_key.clone());
-                                return Task::perform(
+                                tasks.push(Task::perform(
                                     send_notification(track.artist.clone(), track.title.clone(), track.album.clone()),
                                     |_| Message::Tick
-                                );
+                                ));
                             }
                         }
 
                         if let Some(lastfm) = state.lastfm.clone() {
-                            return Task::perform(
+                            tasks.push(Task::perform(
                                 send_now_playing(lastfm, track),
                                 Message::NowPlayingSent
-                            );
+                            ));
+                        }
+
+                        if !tasks.is_empty() {
+                            return Task::batch(tasks);
                         }
                     } else if is_playing_flag {
                         if let (Some(start_time), Some(track_duration)) = (state.track_start_time, track.duration) {
