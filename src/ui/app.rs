@@ -54,6 +54,7 @@ pub struct App {
     auth_attempts: u32,
     last_auth_attempt: Option<DateTime<Utc>>,
     track_image_bytes: Option<Vec<u8>>,
+    track_verified: bool,
 }
 
 impl App {
@@ -89,6 +90,7 @@ impl App {
             auth_attempts: 0,
             last_auth_attempt: None,
             track_image_bytes: None,
+            track_verified: false,
         }
     }
 }
@@ -215,6 +217,7 @@ fn update(state: &mut App, message: Message) -> Task<Message> {
                         state.scrobble_sent = false;
                         state.track_start_time = Some(Utc::now());
                         state.track_image_bytes = None;
+                        state.track_verified = false;
 
                         let mut tasks = Vec::new();
 
@@ -252,7 +255,15 @@ fn update(state: &mut App, message: Message) -> Task<Message> {
                                 elapsed, track_duration_secs, state.scrobble_sent, state.config.general.scrobble_enabled);
 
                             if !state.scrobble_sent && state.config.general.scrobble_enabled {
-                                // Last.fm rules: scrobble at 50% duration OR 240s (4 min), whichever is LESS
+                                // Sanity check: only scrobble if verified (if sanity check enabled)
+                                let can_scrobble = if state.config.general.scrobble_sanity_check {
+                                    state.track_verified
+                                } else {
+                                    true
+                                };
+
+                                if can_scrobble {
+                                    // Last.fm rules: scrobble at 50% duration OR 240s (4 min), whichever is LESS
                                 // For tracks < 8 min: use 50%
                                 // For tracks >= 8 min: cap at 240s
                                 let scrobble_threshold = if track_duration_secs > 0 {
@@ -277,6 +288,7 @@ fn update(state: &mut App, message: Message) -> Task<Message> {
                                             Message::ScrobbleSent
                                         );
                                     }
+                                }
                                 }
                             }
                         }
@@ -392,6 +404,7 @@ Message::AuthSessionComplete(result) => {
         Message::TrackInfoReceived(result) => {
             match result {
                 Ok(track) => {
+                    state.track_verified = true;
                     if let Some(album) = track.album {
                         if let Some(image) = album.image.last() {
                             let url = image.url.clone();
@@ -402,6 +415,7 @@ Message::AuthSessionComplete(result) => {
                     }
                 }
                 Err(e) => {
+                    state.track_verified = false;
                     eprintln!("Track info error: {}", e);
                 }
             }

@@ -52,6 +52,7 @@ pub struct GeneralConfig {
     pub scrobble_enabled: bool,
     pub poll_interval_secs: u64,
     pub ignored_players: Vec<String>,
+    pub scrobble_sanity_check: bool,
 }
 
 impl Default for Config {
@@ -72,6 +73,7 @@ impl Default for Config {
             scrobble_enabled: true,
             poll_interval_secs: 5,
             ignored_players: vec![],
+            scrobble_sanity_check: false,
         },
         }
     }
