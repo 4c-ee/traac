@@ -79,8 +79,9 @@ y = 20                   # Vertical margin (pixels from edge)
 
 # General settings
 [general]
-scrobble_enabled = true     # Enable/disable scrobbling
-poll_interval_secs = 5      # How often to check for track changes
+scrobble_enabled = true # Enable/disable scrobbling
+poll_interval_secs = 5 # How often to check for track changes
+ignored_players = [] # List of MPRIS player names to ignore (e.g., ["vlc", "firefox"])
 ```
 
 #### Configuration Options Explained
