@@ -19,6 +19,10 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use notify_rust::Notification;
 use reqwest;
+use tray_icon::{
+    menu::{Menu, MenuItem, PredefinedMenuItem, MenuEvent},
+    TrayIconBuilder, TrayIconEvent, TrayIcon,
+};
 
 #[to_layer_message]
 #[derive(Debug, Clone)]
@@ -42,6 +46,9 @@ pub enum Message {
     MprisTrackChanged(TrackInfo),
     MprisStatusChanged(bool),
     NoOp,
+    TrayEvent(TrayIconEvent),
+    TrayMenuEvent(MenuEvent),
+    ToggleWindow,
 }
 
 pub struct App {
@@ -61,10 +68,12 @@ pub struct App {
     track_verified: bool,
     track_total_played_secs: u64,
     last_resume_time: Option<DateTime<Utc>>,
+    visible: bool,
+    _tray_icon: Arc<TrayIcon>,
 }
 
 impl App {
-    fn new(config_path: Option<std::path::PathBuf>) -> Self {
+    fn new(config_path: Option<std::path::PathBuf>, tray_icon: Arc<TrayIcon>) -> Self {
         let config = Config::load(config_path).unwrap_or_default();
         let lastfm = if let (Some(session_key), api_key, api_secret) = (
             &config.lastfm.session_key,
@@ -99,6 +108,8 @@ impl App {
             track_verified: false,
             track_total_played_secs: 0,
             last_resume_time: None,
+            visible: true,
+            _tray_icon: tray_icon,
         }
     }
 }
@@ -129,8 +140,30 @@ pub fn run(config_path: Option<std::path::PathBuf>) -> Result<(), Box<dyn std::e
         ..Default::default()
     };
 
+    // Tray icon setup
+    let tray_menu = Menu::new();
+    let show_hide_item = MenuItem::with_id("show_hide", "Show/Hide", true, None);
+    let quit_item = MenuItem::with_id("quit", "Quit", true, None);
+    
+    let _ = tray_menu.append_items(&[
+        &show_hide_item,
+        &PredefinedMenuItem::separator(),
+        &quit_item,
+    ]);
+
+    let icon_path = std::env::current_dir()?.join("logos/traac-single.png");
+    let icon = load_icon(&icon_path);
+
+    let tray_icon = TrayIconBuilder::new()
+        .with_menu(Box::new(tray_menu))
+        .with_tooltip("traac")
+        .with_icon(icon)
+        .build()?;
+    
+    let tray_icon_arc = Arc::new(tray_icon);
+
     application(
-        move || App::new(config_path.clone()),
+        move || App::new(config_path.clone(), tray_icon_arc.clone()),
         "traac",
         update,
         view,
@@ -139,6 +172,7 @@ pub fn run(config_path: Option<std::path::PathBuf>) -> Result<(), Box<dyn std::e
         Subscription::batch(vec![
             iced::time::every(Duration::from_secs(state.config.general.poll_interval_secs)).map(|_| Message::Tick),
             mpris_subscription(state.config.general.ignored_players.clone()),
+            tray_subscription(),
         ])
     })
     .settings(Settings {
@@ -148,6 +182,49 @@ pub fn run(config_path: Option<std::path::PathBuf>) -> Result<(), Box<dyn std::e
     .run()?;
 
     Ok(())
+}
+
+fn load_icon(path: &std::path::Path) -> tray_icon::Icon {
+    let (icon_rgba, icon_width, icon_height) = {
+        let image = ::image::open(path)
+            .expect("Failed to open icon path")
+            .into_rgba8();
+        let (width, height) = image.dimensions();
+        let rgba = image.into_raw();
+        (rgba, width, height)
+    };
+    tray_icon::Icon::from_rgba(icon_rgba, icon_width, icon_height).expect("Failed to create icon")
+}
+
+fn tray_subscription() -> Subscription<Message> {
+    Subscription::run(move || {
+        let (mut tx, rx) = iced::futures::channel::mpsc::channel(100);
+        
+        let tray_channel = TrayIconEvent::receiver();
+        let menu_channel = MenuEvent::receiver();
+
+        std::thread::spawn(move || {
+            loop {
+                if let Ok(event) = tray_channel.try_recv() {
+                    if let TrayIconEvent::Click { .. } = event {
+                        let _ = tx.start_send(Message::ToggleWindow);
+                    }
+                    let _ = tx.start_send(Message::TrayEvent(event));
+                }
+                if let Ok(event) = menu_channel.try_recv() {
+                    if event.id.0 == "show_hide" {
+                        let _ = tx.start_send(Message::ToggleWindow);
+                    } else if event.id.0 == "quit" {
+                        let _ = tx.start_send(Message::Quit);
+                    }
+                    let _ = tx.start_send(Message::TrayMenuEvent(event));
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        });
+        
+        rx
+    })
 }
 
 fn handle_track_change(state: &mut App, track: TrackInfo) -> Task<Message> {
@@ -478,6 +555,19 @@ Message::AuthSessionComplete(result) => {
             Task::none()
         }
         Message::Quit => iced::exit(),
+        Message::ToggleWindow => {
+            state.visible = !state.visible;
+            Task::none()
+        }
+        Message::TrayEvent(event) => {
+            log::debug!("Tray event: {:?}", event);
+            Task::none()
+        }
+        Message::TrayMenuEvent(event) => {
+            log::debug!("Tray menu event: {:?}", event);
+            Task::none()
+        }
+        Message::NoOp => Task::none(),
         Message::TrackInfoReceived(result) => {
             match result {
                 Ok(track) => {
@@ -567,6 +657,12 @@ async fn complete_authentication(lastfm: Arc<LastFm>, token: last_fm_rs::AuthTok
 }
 
 fn view(state: &App) -> Element<'_, Message> {
+    if !state.visible {
+        return container(column![])
+            .width(0)
+            .height(0)
+            .into();
+    }
     let colors = &state.config.ui.color_scheme;
     let base_color: Color = colors.base.parse().unwrap_or(Color::BLACK);
     let _slightly_lighter: Color = colors.slightly_lighter.parse().unwrap_or(Color::from_rgb(0.2, 0.2, 0.3));
