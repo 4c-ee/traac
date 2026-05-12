@@ -1,8 +1,9 @@
 use crate::config::{Anchor, Config};
 use crate::lastfm::LastFm;
-use crate::mpris::{find_player_with_ignore, get_current_track, is_playing, TrackInfo};
+use crate::mpris::{find_player_with_ignore, get_current_track, is_playing, TrackInfo, Event as MprisEvent};
 use iced::widget::{column, container, text, button, row, image};
-use iced::{Color, Element, Length, Task};
+use iced::{Color, Element, Length, Task, Subscription};
+use iced::futures::StreamExt;
 use iced_layershell::{
     application,
     reexport::{
@@ -38,6 +39,9 @@ pub enum Message {
     ToggleIgnore(String),
     TrackInfoReceived(Result<crate::lastfm::Track, String>),
     ImageBytesReceived(Result<Vec<u8>, String>),
+    MprisTrackChanged(TrackInfo),
+    MprisStatusChanged(bool),
+    NoOp,
 }
 
 pub struct App {
@@ -55,6 +59,8 @@ pub struct App {
     last_auth_attempt: Option<DateTime<Utc>>,
     track_image_bytes: Option<Vec<u8>>,
     track_verified: bool,
+    track_total_played_secs: u64,
+    last_resume_time: Option<DateTime<Utc>>,
 }
 
 impl App {
@@ -91,6 +97,8 @@ impl App {
             last_auth_attempt: None,
             track_image_bytes: None,
             track_verified: false,
+            track_total_played_secs: 0,
+            last_resume_time: None,
         }
     }
 }
@@ -127,7 +135,12 @@ pub fn run(config_path: Option<std::path::PathBuf>) -> Result<(), Box<dyn std::e
         update,
         view,
     )
-    .subscription(|state| iced::time::every(Duration::from_secs(state.config.general.poll_interval_secs)).map(|_| Message::Tick))
+    .subscription(|state| {
+        Subscription::batch(vec![
+            iced::time::every(Duration::from_secs(state.config.general.poll_interval_secs)).map(|_| Message::Tick),
+            mpris_subscription(state.config.general.ignored_players.clone()),
+        ])
+    })
     .settings(Settings {
         layer_settings,
         ..Default::default()
@@ -135,6 +148,90 @@ pub fn run(config_path: Option<std::path::PathBuf>) -> Result<(), Box<dyn std::e
     .run()?;
 
     Ok(())
+}
+
+fn handle_track_change(state: &mut App, track: TrackInfo) -> Task<Message> {
+    state.current_track = Some(track.clone());
+    state.now_playing_sent = false;
+    state.scrobble_sent = false;
+    state.track_start_time = Some(Utc::now());
+    state.track_image_bytes = None;
+    state.track_verified = false;
+    state.track_total_played_secs = 0;
+    state.last_resume_time = Some(Utc::now());
+
+    let mut tasks = Vec::new();
+
+    if state.config.ui.show_notifications {
+        let notification_key = format!("{} - {}", track.artist, track.title);
+        if state.last_notified_track.as_ref().map_or(true, |last| last != &notification_key) {
+            state.last_notified_track = Some(notification_key.clone());
+            tasks.push(Task::perform(
+                send_notification(track.artist.clone(), track.title.clone(), track.album.clone()),
+                |_| Message::Tick
+            ));
+        }
+    }
+
+    if let Some(lastfm) = state.lastfm.clone() {
+        tasks.push(Task::perform(
+            send_now_playing(lastfm.clone(), track.clone()),
+            Message::NowPlayingSent
+        ));
+        tasks.push(Task::perform(
+            fetch_track_info(lastfm, track),
+            Message::TrackInfoReceived
+        ));
+    }
+
+    if !tasks.is_empty() {
+        Task::batch(tasks)
+    } else {
+        Task::none()
+    }
+}
+
+fn mpris_subscription(ignored_players: Vec<String>) -> Subscription<Message> {
+    Subscription::run_with(ignored_players.join(","), |ignored_str| {
+        let ignored_players: Vec<String> = ignored_str.split(',').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect();
+        let (mut tx, rx) = iced::futures::channel::mpsc::channel(100);
+        
+        std::thread::spawn(move || {
+            loop {
+                if let Ok(player) = find_player_with_ignore(&ignored_players) {
+                    if let Ok(events) = player.events() {
+                        for event in events {
+                            if let Ok(event) = event {
+                                if tx.start_send(event).is_err() {
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+                std::thread::sleep(Duration::from_secs(1));
+            }
+        });
+
+        rx.map(|event| {
+            match event {
+                MprisEvent::TrackChanged(metadata) => {
+                    if let Some(track) = TrackInfo::from_metadata(&metadata) {
+                        Message::MprisTrackChanged(track)
+                    } else {
+                        Message::NoOp
+                    }
+                }
+                MprisEvent::Playing => {
+                    Message::MprisStatusChanged(true)
+                }
+                MprisEvent::Paused | MprisEvent::Stopped => {
+                    Message::MprisStatusChanged(false)
+                }
+                _ => Message::NoOp,
+            }
+        })
+    })
 }
 
 fn update(state: &mut App, message: Message) -> Task<Message> {
@@ -212,45 +309,14 @@ fn update(state: &mut App, message: Message) -> Task<Message> {
                     };
 
                     if track_changed {
-                        state.current_track = Some(track.clone());
-                        state.now_playing_sent = false;
-                        state.scrobble_sent = false;
-                        state.track_start_time = Some(Utc::now());
-                        state.track_image_bytes = None;
-                        state.track_verified = false;
-
-                        let mut tasks = Vec::new();
-
-                        if state.config.ui.show_notifications {
-                            let notification_key = format!("{} - {}", track.artist, track.title);
-                            if state.last_notified_track.as_ref().map_or(true, |last| last != &notification_key) {
-                                state.last_notified_track = Some(notification_key.clone());
-                                tasks.push(Task::perform(
-                                    send_notification(track.artist.clone(), track.title.clone(), track.album.clone()),
-                                    |_| Message::Tick
-                                ));
-                            }
-                        }
-
-                        if let Some(lastfm) = state.lastfm.clone() {
-                            tasks.push(Task::perform(
-                                send_now_playing(lastfm.clone(), track.clone()),
-                                Message::NowPlayingSent
-                            ));
-                            tasks.push(Task::perform(
-                                fetch_track_info(lastfm, track),
-                                Message::TrackInfoReceived
-                            ));
-                        }
-
-                        if !tasks.is_empty() {
-                            return Task::batch(tasks);
-                        }
+                        return handle_track_change(state, track);
                     } else if is_playing_flag {
-                        if let (Some(start_time), Some(track_duration)) = (state.track_start_time, track.duration) {
-                            let elapsed = Utc::now().signed_duration_since(start_time).num_seconds() as u64;
-                            let track_duration_secs = track_duration;
+                        // Update elapsed time for scrobble check
+                        let now = Utc::now();
+                        let elapsed = state.track_total_played_secs + 
+                            state.last_resume_time.map_or(0, |last| now.signed_duration_since(last).num_seconds() as u64);
 
+                        if let Some(track_duration_secs) = track.duration {
                             eprintln!("Scrobble check: elapsed={}, duration={}, scrobble_sent={}, enabled={}", 
                                 elapsed, track_duration_secs, state.scrobble_sent, state.config.general.scrobble_enabled);
 
@@ -264,31 +330,27 @@ fn update(state: &mut App, message: Message) -> Task<Message> {
 
                                 if can_scrobble {
                                     // Last.fm rules: scrobble at 50% duration OR 240s (4 min), whichever is LESS
-                                // For tracks < 8 min: use 50%
-                                // For tracks >= 8 min: cap at 240s
-                                let scrobble_threshold = if track_duration_secs > 0 {
-                                    let half_duration = track_duration_secs / 2;
-                                    let max_threshold = 240; // 4 minutes cap
-                                    std::cmp::min(half_duration, max_threshold)
-                                } else {
-                                    240 // fallback to 240s if no duration
-                                };
+                                    let scrobble_threshold = {
+                                        let half_duration = track_duration_secs / 2;
+                                        let max_threshold = 240; // 4 minutes cap
+                                        std::cmp::min(half_duration, max_threshold)
+                                    };
 
-                                let should_scrobble = elapsed >= scrobble_threshold;
+                                    let should_scrobble = elapsed >= scrobble_threshold;
 
-                                eprintln!("Should scrobble: {} (elapsed={}, threshold={})", 
-                                    should_scrobble, elapsed, scrobble_threshold);
+                                    eprintln!("Should scrobble: {} (elapsed={}, threshold={})", 
+                                        should_scrobble, elapsed, scrobble_threshold);
 
-                                if should_scrobble && state.lastfm.is_some() {
-                                    state.scrobble_sent = true;
-                                    eprintln!("Sending scrobble: {} - {}", track.artist, track.title);
-                                    if let Some(lastfm) = state.lastfm.clone() {
-                                        return Task::perform(
-                                            send_scrobble(lastfm, track),
-                                            Message::ScrobbleSent
-                                        );
+                                    if should_scrobble && state.lastfm.is_some() {
+                                        state.scrobble_sent = true;
+                                        eprintln!("Sending scrobble: {} - {}", track.artist, track.title);
+                                        if let Some(lastfm) = state.lastfm.clone() {
+                                            return Task::perform(
+                                                send_scrobble(lastfm, track),
+                                                Message::ScrobbleSent
+                                            );
+                                        }
                                     }
-                                }
                                 }
                             }
                         }
@@ -299,6 +361,21 @@ fn update(state: &mut App, message: Message) -> Task<Message> {
         }
         Message::TrackUpdate(track) => {
             state.current_track = track;
+            Task::none()
+        }
+        Message::MprisTrackChanged(track) => {
+            handle_track_change(state, track)
+        }
+        Message::MprisStatusChanged(is_playing) => {
+            let now = Utc::now();
+            if is_playing {
+                if state.last_resume_time.is_none() {
+                    state.last_resume_time = Some(now);
+                }
+            } else if let Some(last) = state.last_resume_time {
+                state.track_total_played_secs += now.signed_duration_since(last).num_seconds() as u64;
+                state.last_resume_time = None;
+            }
             Task::none()
         }
         Message::AuthUrl(url) => {

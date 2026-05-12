@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
-use mpris::{Metadata, Player, PlayerFinder, PlaybackStatus};
+use mpris::{Metadata, Player, PlayerFinder};
+pub use mpris::{PlaybackStatus, Event};
 
 #[derive(Debug, Clone)]
 pub struct TrackInfo {
