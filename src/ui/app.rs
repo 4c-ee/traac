@@ -32,8 +32,8 @@ pub enum Message {
     SaveConfig,
     OpenAuthUrl(String),
     CompleteAuth,
-    NowPlayingSent,
-    ScrobbleSent,
+    NowPlayingSent(Result<(), String>),
+    ScrobbleSent(Result<(), String>),
     AppError(String),
     SendNotification(String, String),
 }
@@ -53,9 +53,9 @@ pub struct App {
     last_auth_attempt: Option<DateTime<Utc>>,
 }
 
-impl Default for App {
-    fn default() -> Self {
-        let config = Config::load().unwrap_or_default();
+impl App {
+    fn new(config_path: Option<std::path::PathBuf>) -> Self {
+        let config = Config::load(config_path).unwrap_or_default();
         let lastfm = if let (Some(session_key), api_key, api_secret) = (
             &config.lastfm.session_key,
             &config.lastfm.api_key,
@@ -89,8 +89,8 @@ impl Default for App {
     }
 }
 
-pub fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let config = Config::load().unwrap_or_default();
+pub fn run(config_path: Option<std::path::PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
+    let config = Config::load(config_path.clone()).unwrap_or_default();
     let anchor = match config.ui.position.anchor {
         Anchor::TopLeft => LayerAnchor::Top | LayerAnchor::Left,
         Anchor::TopRight => LayerAnchor::Top | LayerAnchor::Right,
@@ -116,7 +116,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     application(
-        App::default,
+        move || App::new(config_path.clone()),
         "traac",
         update,
         view,
@@ -225,47 +225,47 @@ fn update(state: &mut App, message: Message) -> Task<Message> {
                         if let Some(lastfm) = state.lastfm.clone() {
                             return Task::perform(
                                 send_now_playing(lastfm, track),
-                                |_| Message::NowPlayingSent
+                                Message::NowPlayingSent
                             );
                         }
-} else if is_playing_flag {
-if let (Some(start_time), Some(track_duration)) = (state.track_start_time, track.duration) {
-            let elapsed = Utc::now().signed_duration_since(start_time).num_seconds() as u64;
-            let track_duration_secs = track_duration;
+                    } else if is_playing_flag {
+                        if let (Some(start_time), Some(track_duration)) = (state.track_start_time, track.duration) {
+                            let elapsed = Utc::now().signed_duration_since(start_time).num_seconds() as u64;
+                            let track_duration_secs = track_duration;
 
-                    eprintln!("Scrobble check: elapsed={}, duration={}, scrobble_sent={}, enabled={}", 
-                        elapsed, track_duration_secs, state.scrobble_sent, state.config.general.scrobble_enabled);
+                            eprintln!("Scrobble check: elapsed={}, duration={}, scrobble_sent={}, enabled={}", 
+                                elapsed, track_duration_secs, state.scrobble_sent, state.config.general.scrobble_enabled);
 
-                    if !state.scrobble_sent && state.config.general.scrobble_enabled {
-                        // Last.fm rules: scrobble at 50% duration OR 240s (4 min), whichever is LESS
-                        // For tracks < 8 min: use 50%
-                        // For tracks >= 8 min: cap at 240s
-                        let scrobble_threshold = if track_duration_secs > 0 {
-                            let half_duration = track_duration_secs / 2;
-                            let max_threshold = 240; // 4 minutes cap
-                            std::cmp::min(half_duration, max_threshold)
-                        } else {
-                            240 // fallback to 240s if no duration
-                        };
+                            if !state.scrobble_sent && state.config.general.scrobble_enabled {
+                                // Last.fm rules: scrobble at 50% duration OR 240s (4 min), whichever is LESS
+                                // For tracks < 8 min: use 50%
+                                // For tracks >= 8 min: cap at 240s
+                                let scrobble_threshold = if track_duration_secs > 0 {
+                                    let half_duration = track_duration_secs / 2;
+                                    let max_threshold = 240; // 4 minutes cap
+                                    std::cmp::min(half_duration, max_threshold)
+                                } else {
+                                    240 // fallback to 240s if no duration
+                                };
 
-                        let should_scrobble = elapsed >= scrobble_threshold;
+                                let should_scrobble = elapsed >= scrobble_threshold;
 
-                        eprintln!("Should scrobble: {} (elapsed={}, threshold={})", 
-                            should_scrobble, elapsed, scrobble_threshold);
+                                eprintln!("Should scrobble: {} (elapsed={}, threshold={})", 
+                                    should_scrobble, elapsed, scrobble_threshold);
 
-                        if should_scrobble && state.lastfm.is_some() {
-                            state.scrobble_sent = true;
-                            eprintln!("Sending scrobble: {} - {}", track.artist, track.title);
-                            if let Some(lastfm) = state.lastfm.clone() {
-                                return Task::perform(
-                                    send_scrobble(lastfm, track),
-                                    |_| Message::ScrobbleSent
-                                );
+                                if should_scrobble && state.lastfm.is_some() {
+                                    state.scrobble_sent = true;
+                                    eprintln!("Sending scrobble: {} - {}", track.artist, track.title);
+                                    if let Some(lastfm) = state.lastfm.clone() {
+                                        return Task::perform(
+                                            send_scrobble(lastfm, track),
+                                            Message::ScrobbleSent
+                                        );
+                                    }
+                                }
                             }
                         }
                     }
-                }
-            }
                 }
             }
             Task::none()
@@ -346,12 +346,18 @@ Message::AuthSessionComplete(result) => {
     }
     Task::none()
 }
-        Message::NowPlayingSent => {
-            state.now_playing_sent = true;
+        Message::NowPlayingSent(result) => {
+            match result {
+                Ok(_) => state.now_playing_sent = true,
+                Err(e) => state.error_message = Some(e),
+            }
             Task::none()
         }
-        Message::ScrobbleSent => {
-            state.scrobble_sent = true;
+        Message::ScrobbleSent(result) => {
+            match result {
+                Ok(_) => state.scrobble_sent = true,
+                Err(e) => state.error_message = Some(e),
+            }
             Task::none()
         }
         Message::AppError(msg) => {
@@ -364,13 +370,15 @@ Message::AuthSessionComplete(result) => {
 }
 
 async fn send_now_playing(lastfm: Arc<LastFm>, track: TrackInfo) -> Result<(), String> {
-    let _ = lastfm.update_now_playing(&track.artist, &track.title, track.album.as_deref()).await;
-    Ok(())
+    lastfm.update_now_playing(&track.artist, &track.title, track.album.as_deref())
+        .await
+        .map_err(|e| format!("Now playing error: {}", e))
 }
 
 async fn send_scrobble(lastfm: Arc<LastFm>, track: TrackInfo) -> Result<(), String> {
-    let _ = lastfm.scrobble(&track.artist, &track.title, track.album.as_deref()).await;
-    Ok(())
+    lastfm.scrobble(&track.artist, &track.title, track.album.as_deref())
+        .await
+        .map_err(|e| format!("Scrobble error: {}", e))
 }
 
 async fn send_notification(artist: String, title: String, _album: Option<String>) -> Result<(), String> {

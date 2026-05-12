@@ -107,8 +107,8 @@ impl Config {
             .join("config.toml")
     }
 
-    pub fn load() -> std::io::Result<Self> {
-        let path = Self::config_path();
+    pub fn load(custom_path: Option<PathBuf>) -> std::io::Result<Self> {
+        let path = custom_path.unwrap_or_else(Self::config_path);
         if !path.exists() {
             return Ok(Config::default());
         }
