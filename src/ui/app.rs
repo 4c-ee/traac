@@ -199,9 +199,9 @@ fn update(state: &mut App, message: Message) -> Task<Message> {
                             );
                         }
 } else if is_playing_flag {
-                if let (Some(start_time), Some(track_duration)) = (state.track_start_time, track.duration) {
-                    let elapsed = Utc::now().signed_duration_since(start_time).num_seconds() as u64;
-                    let track_duration_secs = track_duration / 1000;
+if let (Some(start_time), Some(track_duration)) = (state.track_start_time, track.duration) {
+            let elapsed = Utc::now().signed_duration_since(start_time).num_seconds() as u64;
+            let track_duration_secs = track_duration;
 
                     eprintln!("Scrobble check: elapsed={}, duration={}, scrobble_sent={}, enabled={}", 
                         elapsed, track_duration_secs, state.scrobble_sent, state.config.general.scrobble_enabled);
