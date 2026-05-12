@@ -237,19 +237,31 @@ Message::CompleteAuth => {
     Task::none()
 }
 Message::AuthSessionComplete(result) => {
-            match result {
-                Ok((session_key, username)) => {
-                    state.config.lastfm.session_key = Some(session_key);
-                    state.config.lastfm.username = Some(username);
-                    let _ = state.config.save();
+    match result {
+        Ok((session_key, username)) => {
+            eprintln!("Auth successful! Username: {}, Session: {}", username, session_key);
+            state.config.lastfm.session_key = Some(session_key.clone());
+            state.config.lastfm.username = Some(username.clone());
+            match state.config.save() {
+                Ok(_) => {
+                    eprintln!("Config saved successfully");
                     state.error_message = None;
+                    state.auth_token = None;
+                    state.auth_url = None;
                 }
                 Err(e) => {
-                    state.error_message = Some(e);
+                    eprintln!("Failed to save config: {}", e);
+                    state.error_message = Some(format!("Failed to save config: {}", e));
                 }
             }
-            Task::none()
         }
+        Err(e) => {
+            eprintln!("Auth error: {}", e);
+            state.error_message = Some(format!("Auth failed: {}", e));
+        }
+    }
+    Task::none()
+}
         Message::NowPlayingSent => {
             state.now_playing_sent = true;
             Task::none()
@@ -288,8 +300,9 @@ async fn send_notification(artist: String, title: String, _album: Option<String>
 }
 
 async fn get_auth_token(lastfm: Arc<LastFm>) -> Result<(last_fm_rs::AuthToken, String), String> {
-    let token = lastfm.get_token().await.map_err(|e| e.to_string())?;
-    let url = lastfm.get_auth_url(&token).map_err(|e| e.to_string())?;
+    let token = lastfm.get_token().await.map_err(|e| format!("get_token error: {}", e))?;
+    let url = lastfm.get_auth_url(&token).map_err(|e| format!("get_auth_url error: {}", e))?;
+    eprintln!("Auth token obtained, URL: {}", url);
     Ok((token, url))
 }
 
@@ -347,37 +360,44 @@ fn view(state: &App) -> Element<'_, Message> {
     }
 
 if state.config.lastfm.session_key.is_none() {
-    if state.config.lastfm.api_key.is_empty() || state.config.lastfm.api_secret.is_empty() {
-        content = content.push(
-            text("Missing Last.fm API credentials").size(12).color(Color::from_rgb(1.0, 0.3, 0.3))
-        );
-        content = content.push(
-            text("Add api_key and api_secret to config.toml").size(10).color(accent_grey)
-        );
-    } else if state.auth_url.is_none() {
-        content = content.push(
-            text("Checking authentication...").size(12).color(accent_grey)
-        );
-    } else {
-        content = content
-        .push(text("Last.fm not authenticated").size(12).color(accent_grey));
-      
-      if let Some(url) = &state.auth_url {
-        content = content
-        .push(
-          button(text("Open Authorization Page"))
-          .on_press(Message::OpenAuthUrl(url.clone()))
-        )
-        .push(
-          text("After authorizing, click 'Complete Auth'").size(10).color(accent_grey)
-        )
-        .push(
-          button(text("Complete Authorization"))
-          .on_press(Message::CompleteAuth)
-        );
-      }
-    }
-}
+            if state.config.lastfm.api_key.is_empty() || state.config.lastfm.api_secret.is_empty() {
+                content = content.push(
+                    text("Missing Last.fm API credentials").size(12).color(Color::from_rgb(1.0, 0.3, 0.3))
+                );
+                content = content.push(
+                    text("Add api_key and api_secret to config.toml").size(10).color(accent_grey)
+                );
+            } else if state.auth_url.is_none() {
+                content = content.push(
+                    text("Getting authorization token...").size(12).color(accent_grey)
+                );
+            } else if state.auth_token.is_some() {
+                content = content
+                .push(text("Authorization required").size(12).color(bright));
+              
+              if let Some(url) = &state.auth_url {
+                content = content
+                .push(
+                  button(text("1. Open Authorization Page"))
+                  .on_press(Message::OpenAuthUrl(url.clone()))
+                )
+                .push(
+                  text("2. Authorize the app in your browser").size(10).color(accent_grey)
+                )
+                .push(
+                  text("3. Then click the button below").size(10).color(accent_grey)
+                )
+                .push(
+                  button(text("Complete Authorization"))
+                  .on_press(Message::CompleteAuth)
+                );
+              }
+            } else {
+                content = content.push(
+                    text("Waiting for authorization...").size(12).color(accent_grey)
+                );
+            }
+        }
 
     container(
         content
