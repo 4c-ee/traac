@@ -1,7 +1,7 @@
 use crate::config::{Anchor, Config};
 use crate::lastfm::LastFm;
 use crate::mpris::{find_player_with_ignore, get_current_track, is_playing, TrackInfo};
-use iced::widget::{column, container, text, button};
+use iced::widget::{column, container, text, button, row, image};
 use iced::{Color, Element, Length, Task};
 use iced_layershell::{
     application,
@@ -421,13 +421,30 @@ fn view(state: &App) -> Element<'_, Message> {
     let mut content = column![].spacing(4);
 
     if let Some(track) = &state.current_track {
-        content = content
-            .push(text(&track.artist).size(18).color(text_color))
-            .push(text(&track.title).size(16).color(bright));
+        let mut track_info = column![
+            text(&track.artist).size(18).color(text_color),
+            text(&track.title).size(16).color(bright),
+        ].spacing(2);
 
         if let Some(album) = &track.album {
-            content = content.push(text(album).size(14).color(accent_grey));
+            track_info = track_info.push(text(album).size(14).color(accent_grey));
         }
+
+        let mut track_row = row![].spacing(10);
+        
+        if let Some(art_url) = &track.art_url {
+            if art_url.starts_with("file://") {
+                let path = art_url.trim_start_matches("file://");
+                track_row = track_row.push(
+                    image(path)
+                        .width(Length::Fixed(60.0))
+                        .height(Length::Fixed(60.0))
+                );
+            }
+        }
+        
+        track_row = track_row.push(track_info);
+        content = content.push(track_row);
 
         if state.now_playing_sent {
             content = content.push(
