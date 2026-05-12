@@ -24,6 +24,7 @@ urlencoding = "2.1"
 tokio = { version = "1", features = ["full"] }
 tray-icon = { version = "0.19", default-features = false }
 image = "0.25"
+gtk = "0.18"
 
 [profile.release]
 strip = true

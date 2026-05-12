@@ -115,6 +115,9 @@ impl App {
 }
 
 pub fn run(config_path: Option<std::path::PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(target_os = "linux")]
+    let _ = gtk::init();
+
     let config = Config::load(config_path.clone()).unwrap_or_default();
     let anchor = match config.ui.position.anchor {
         Anchor::TopLeft => LayerAnchor::Top | LayerAnchor::Left,
