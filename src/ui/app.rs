@@ -1,7 +1,7 @@
 use crate::config::{Anchor, Config};
 use crate::lastfm::LastFm;
 use crate::mpris::{find_player, get_current_track, is_playing, TrackInfo};
-use iced::widget::{column, container, text, text_input, button};
+use iced::widget::{column, container, text, button};
 use iced::{Color, Element, Length, Task};
 use iced_layershell::{
     application,
@@ -26,12 +26,12 @@ pub enum Message {
     Tick,
     Quit,
     TrackUpdate(Option<TrackInfo>),
-    AuthToken(String),
     AuthUrl(String),
-    AuthComplete(Result<(String, String), String>),
+    AuthComplete(Result<(last_fm_rs::AuthToken, String), String>),
+    AuthSessionComplete(Result<(String, String), String>),
     SaveConfig,
     OpenAuthUrl(String),
-    CheckAuth,
+    CompleteAuth,
     NowPlayingSent,
     ScrobbleSent,
     AppError(String),
@@ -42,9 +42,8 @@ pub struct App {
     config: Config,
     current_track: Option<TrackInfo>,
     lastfm: Option<Arc<LastFm>>,
-    auth_token: Option<String>,
+    auth_token: Option<last_fm_rs::AuthToken>,
     auth_url: Option<String>,
-    auth_input: String,
     error_message: Option<String>,
     now_playing_sent: bool,
     scrobble_sent: bool,
@@ -60,7 +59,6 @@ impl Default for App {
             lastfm: None,
             auth_token: None,
             auth_url: None,
-            auth_input: String::new(),
             error_message: None,
             now_playing_sent: false,
             scrobble_sent: false,
@@ -115,52 +113,70 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 fn update(state: &mut App, message: Message) -> Task<Message> {
     match message {
         Message::Tick => {
+            if state.config.lastfm.session_key.is_none() && state.lastfm.is_none() && state.auth_url.is_none() {
+                if !state.config.lastfm.api_key.is_empty() && !state.config.lastfm.api_secret.is_empty() {
+                    let lastfm = LastFm::new(
+                        state.config.lastfm.api_key.clone(),
+                        state.config.lastfm.api_secret.clone()
+                    );
+                    let lastfm_arc = Arc::new(lastfm);
+                    state.lastfm = Some(lastfm_arc.clone());
+                    return Task::perform(
+                        get_auth_token(lastfm_arc),
+                        |result| match result {
+                            Ok((token, url)) => Message::AuthComplete(Ok((token, url))),
+                            Err(e) => Message::AuthComplete(Err(e)),
+                        }
+                    );
+                }
+            }
+            
             if let Ok(player) = find_player() {
                 let track = get_current_track(&player);
                 let is_playing_flag = is_playing(&player);
-                
+
                 if let Some(track) = track {
                     let track_changed = match &state.current_track {
                         Some(current) => {
-                            current.artist != track.artist || 
+                            current.artist != track.artist ||
                             current.title != track.title ||
                             current.album != track.album
                         }
                         None => true,
                     };
 
-                if track_changed {
-                    state.current_track = Some(track.clone());
-                    state.now_playing_sent = false;
-                    state.scrobble_sent = false;
-                    state.track_start_time = Some(Utc::now());
-                    
-                    if state.config.ui.show_notifications {
-                        let notification_key = format!("{} - {}", track.artist, track.title);
-                        if state.last_notified_track.as_ref().map_or(true, |last| last != &notification_key) {
-                            state.last_notified_track = Some(notification_key.clone());
+                    if track_changed {
+                        state.current_track = Some(track.clone());
+                        state.now_playing_sent = false;
+                        state.scrobble_sent = false;
+                        state.track_start_time = Some(Utc::now());
+
+                        if state.config.ui.show_notifications {
+                            let notification_key = format!("{} - {}", track.artist, track.title);
+                            if state.last_notified_track.as_ref().map_or(true, |last| last != &notification_key) {
+                                state.last_notified_track = Some(notification_key.clone());
+                                return Task::perform(
+                                    send_notification(track.artist.clone(), track.title.clone(), track.album.clone()),
+                                    |_| Message::Tick
+                                );
+                            }
+                        }
+
+                        if let Some(lastfm) = state.lastfm.clone() {
                             return Task::perform(
-                                send_notification(track.artist.clone(), track.title.clone(), track.album.clone()),
-                                |_| Message::Tick
+                                send_now_playing(lastfm, track),
+                                |_| Message::NowPlayingSent
                             );
                         }
-                    }
-                    
-                    if let Some(lastfm) = state.lastfm.clone() {
-                        return Task::perform(
-                            send_now_playing(lastfm, track),
-                            |_| Message::NowPlayingSent
-                        );
-                    }
-                } else if is_playing_flag {
+                    } else if is_playing_flag {
                         if let (Some(start_time), Some(track_duration)) = (state.track_start_time, track.duration) {
                             let elapsed = Utc::now().signed_duration_since(start_time).num_seconds() as u64;
                             let track_duration_secs = track_duration / 1000;
-                            
+
                             if !state.scrobble_sent && state.config.general.scrobble_enabled {
-                                let should_scrobble = elapsed >= 240 || 
-                                    (track_duration_secs > 0 && elapsed >= track_duration_secs / 2);
-                                    
+                                let should_scrobble = elapsed >= 240 ||
+                                (track_duration_secs > 0 && elapsed >= track_duration_secs / 2);
+
                                 if should_scrobble && state.lastfm.is_some() {
                                     state.scrobble_sent = true;
                                     if let Some(lastfm) = state.lastfm.clone() {
@@ -181,49 +197,58 @@ fn update(state: &mut App, message: Message) -> Task<Message> {
             state.current_track = track;
             Task::none()
         }
-        Message::AuthToken(token) => {
-            state.auth_token = Some(token);
-            Task::none()
-        }
         Message::AuthUrl(url) => {
             state.auth_url = Some(url);
             Task::none()
         }
-        Message::AuthComplete(result) => {
+Message::AuthComplete(result) => {
+    match result {
+        Ok((token, url)) => {
+            state.auth_token = Some(token);
+            state.auth_url = Some(url);
+        }
+        Err(e) => {
+            state.error_message = Some(e);
+        }
+    }
+    Task::none()
+}
+        Message::SaveConfig => {
+            let _ = state.config.save();
+            Task::none()
+        }
+Message::OpenAuthUrl(url) => {
+    let _ = open::that(&url);
+    Task::none()
+}
+Message::CompleteAuth => {
+    if let (Some(token), Some(_)) = (&state.auth_token, &state.auth_url) {
+        if let Some(lastfm) = state.lastfm.clone() {
+            let token_clone = token.clone();
+            return Task::perform(
+                complete_authentication(lastfm, token_clone),
+                |result| match result {
+                    Ok((session_key, username)) => Message::AuthSessionComplete(Ok((session_key, username))),
+                    Err(e) => Message::AuthSessionComplete(Err(e)),
+                }
+            );
+        }
+    }
+    Task::none()
+}
+Message::AuthSessionComplete(result) => {
             match result {
                 Ok((session_key, username)) => {
                     state.config.lastfm.session_key = Some(session_key);
                     state.config.lastfm.username = Some(username);
                     let _ = state.config.save();
+                    state.error_message = None;
                 }
                 Err(e) => {
                     state.error_message = Some(e);
                 }
             }
             Task::none()
-        }
-        Message::SaveConfig => {
-            let _ = state.config.save();
-            Task::none()
-        }
-        Message::OpenAuthUrl(url) => {
-            let _ = open::that(&url);
-            Task::none()
-        }
-        Message::CheckAuth => {
-            if state.config.lastfm.session_key.is_some() {
-                Task::none()
-            } else if !state.config.lastfm.api_key.is_empty() && !state.config.lastfm.api_secret.is_empty() {
-                let lastfm = LastFm::new(
-                    state.config.lastfm.api_key.clone(), 
-                    state.config.lastfm.api_secret.clone()
-                );
-                state.lastfm = Some(Arc::new(lastfm));
-                Task::none()
-            } else {
-                state.error_message = Some("Missing Last.fm API credentials".to_string());
-                Task::none()
-            }
         }
         Message::NowPlayingSent => {
             state.now_playing_sent = true;
@@ -257,9 +282,22 @@ async fn send_notification(artist: String, title: String, _album: Option<String>
     notification.summary("Now Playing");
     notification.body(&format!("{} - {}", artist, title));
     notification.appname("traac");
-    
+
     let _ = notification.show();
     Ok(())
+}
+
+async fn get_auth_token(lastfm: Arc<LastFm>) -> Result<(last_fm_rs::AuthToken, String), String> {
+    let token = lastfm.get_token().await.map_err(|e| e.to_string())?;
+    let url = lastfm.get_auth_url(&token).map_err(|e| e.to_string())?;
+    Ok((token, url))
+}
+
+async fn complete_authentication(lastfm: Arc<LastFm>, token: last_fm_rs::AuthToken) -> Result<(String, String), String> {
+    let session = lastfm.get_session(&token).await.map_err(|e| e.to_string())?;
+    let session_key = session.key;
+    let username = session.name;
+    Ok((session_key, username))
 }
 
 fn view(state: &App) -> Element<'_, Message> {
@@ -308,22 +346,38 @@ fn view(state: &App) -> Element<'_, Message> {
         );
     }
 
-    if state.config.lastfm.session_key.is_none() {
+if state.config.lastfm.session_key.is_none() {
+    if state.config.lastfm.api_key.is_empty() || state.config.lastfm.api_secret.is_empty() {
+        content = content.push(
+            text("Missing Last.fm API credentials").size(12).color(Color::from_rgb(1.0, 0.3, 0.3))
+        );
+        content = content.push(
+            text("Add api_key and api_secret to config.toml").size(10).color(accent_grey)
+        );
+    } else if state.auth_url.is_none() {
+        content = content.push(
+            text("Checking authentication...").size(12).color(accent_grey)
+        );
+    } else {
         content = content
-            .push(text("Last.fm not authenticated").size(12).color(accent_grey));
-
-        if let Some(url) = &state.auth_url {
-            content = content
-                .push(
-                    button(text("Open Auth URL"))
-                        .on_press(Message::OpenAuthUrl(url.clone()))
-                )
-                .push(
-                    text_input("Enter token from URL", &state.auth_input)
-                        .on_input(Message::AuthToken)
-                );
-        }
+        .push(text("Last.fm not authenticated").size(12).color(accent_grey));
+      
+      if let Some(url) = &state.auth_url {
+        content = content
+        .push(
+          button(text("Open Authorization Page"))
+          .on_press(Message::OpenAuthUrl(url.clone()))
+        )
+        .push(
+          text("After authorizing, click 'Complete Auth'").size(10).color(accent_grey)
+        )
+        .push(
+          button(text("Complete Authorization"))
+          .on_press(Message::CompleteAuth)
+        );
+      }
     }
+}
 
     container(
         content
