@@ -1,5 +1,5 @@
 use crate::config::{Anchor, Config};
-use crate::mpris::{find_player_with_ignore, TrackInfo, Event as MprisEvent};
+use crate::mpris::{find_player_with_ignore, get_current_metadata, is_playing, TrackInfo, Event as MprisEvent};
 use crate::error::TraacError;
 use iced::Subscription;
 use iced_layershell::{
@@ -146,10 +146,24 @@ fn mpris_subscription(ignored_players: Vec<String>) -> Subscription<Message> {
     Subscription::run_with(ignored_players.join(","), |ignored_str| {
         let ignored_players: Vec<String> = ignored_str.split(',').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect();
         let (mut tx, rx) = iced::futures::channel::mpsc::channel(100);
-        
+
         std::thread::spawn(move || {
             loop {
                 if let Ok(player) = find_player_with_ignore(&ignored_players) {
+                    if let Some(metadata) = get_current_metadata(&player) {
+                        let playing = is_playing(&player);
+                        if tx.start_send(MprisEvent::TrackChanged(metadata)).is_err() {
+                            return;
+                        }
+                        if playing {
+                            if tx.start_send(MprisEvent::Playing).is_err() {
+                                return;
+                            }
+                        } else if tx.start_send(MprisEvent::Paused).is_err() {
+                            return;
+                        }
+                    }
+
                     if let Ok(events) = player.events() {
                         for event in events {
                             if let Ok(event) = event {
@@ -159,6 +173,8 @@ fn mpris_subscription(ignored_players: Vec<String>) -> Subscription<Message> {
                             }
                         }
                     }
+
+                    let _ = tx.start_send(MprisEvent::PlayerShutDown);
                 }
                 std::thread::sleep(Duration::from_secs(1));
             }
@@ -180,6 +196,9 @@ fn mpris_subscription(ignored_players: Vec<String>) -> Subscription<Message> {
                     Message::MprisStatusChanged(false)
                 }
                 MprisEvent::Stopped => {
+                    Message::MprisStopped
+                }
+                MprisEvent::PlayerShutDown => {
                     Message::MprisStopped
                 }
                 _ => Message::NoOp,

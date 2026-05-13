@@ -114,6 +114,10 @@ pub fn get_current_track(player: &Player) -> Option<TrackInfo> {
     TrackInfo::from_metadata(&metadata)
 }
 
+pub fn get_current_metadata(player: &Player) -> Option<Metadata> {
+    player.get_metadata().ok()
+}
+
 pub fn is_playing(player: &Player) -> bool {
     player
         .get_playback_status()
