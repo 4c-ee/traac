@@ -242,10 +242,14 @@ pub fn update(state: &mut App, message: Message) -> Task<Message> {
                         if let Some(image) = album.image.last() {
                             let url = image.url.clone();
                             if !url.is_empty() {
-                                return Task::perform(
-                                    fetch_image_bytes(url), 
-                                    |res| Message::ImageBytesReceived(res.map_err(|e| e.to_string()))
-                                );
+                                if let Some(bytes) = state.image_cache.get(&url) {
+                                    state.track_image_bytes = Some(bytes.clone());
+                                } else {
+                                    return Task::perform(
+                                        fetch_image_bytes(url), 
+                                        |res| Message::ImageBytesReceived(res.map_err(|e| e.to_string()))
+                                    );
+                                }
                             }
                         }
                     }
@@ -259,7 +263,8 @@ pub fn update(state: &mut App, message: Message) -> Task<Message> {
         }
         Message::ImageBytesReceived(result) => {
             match result {
-                Ok(bytes) => {
+                Ok((url, bytes)) => {
+                    state.image_cache.insert(url, bytes.clone());
                     state.track_image_bytes = Some(bytes);
                 }
                 Err(e) => {
@@ -283,6 +288,12 @@ fn handle_track_change(state: &mut App, track: TrackInfo) -> Task<Message> {
     state.last_resume_time = Some(Utc::now());
 
     let mut tasks = Vec::new();
+
+    if let Some(art_url) = &track.art_url {
+        if let Some(bytes) = state.image_cache.get(art_url) {
+            state.track_image_bytes = Some(bytes.clone());
+        }
+    }
 
     if state.config.ui.show_notifications {
         let notification_key = format!("{} - {}", track.artist, track.title);
@@ -322,10 +333,10 @@ async fn fetch_track_info(lastfm: Arc<LastFm>, track: TrackInfo) -> Result<crate
     lastfm.get_track_info(&track.artist, &track.title).await
 }
 
-async fn fetch_image_bytes(url: String) -> Result<Vec<u8>, TraacError> {
-    let response = reqwest::get(url).await?;
+async fn fetch_image_bytes(url: String) -> Result<(String, Vec<u8>), TraacError> {
+    let response = reqwest::get(&url).await?;
     let bytes = response.bytes().await?;
-    Ok(bytes.to_vec())
+    Ok((url, bytes.to_vec()))
 }
 
 async fn send_now_playing(lastfm: Arc<LastFm>, track: TrackInfo) -> Result<(), TraacError> {

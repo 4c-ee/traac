@@ -5,6 +5,7 @@ use iced::Color;
 use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use tray_icon::TrayIcon;
+use std::collections::HashMap;
 
 pub struct App {
     pub config: Config,
@@ -22,6 +23,7 @@ pub struct App {
     pub auth_attempts: u32,
     pub last_auth_attempt: Option<DateTime<Utc>>,
     pub track_image_bytes: Option<Vec<u8>>,
+    pub image_cache: HashMap<String, Vec<u8>>,
     pub track_verified: bool,
     pub track_total_played_secs: u64,
     pub last_resume_time: Option<DateTime<Utc>>,
@@ -87,6 +89,7 @@ impl App {
             auth_attempts: 0,
             last_auth_attempt: None,
             track_image_bytes: None,
+            image_cache: HashMap::new(),
             track_verified: false,
             track_total_played_secs: 0,
             last_resume_time: None,

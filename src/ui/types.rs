@@ -20,7 +20,7 @@ pub enum Message {
     SendNotification(String, String),
     ToggleIgnore(String),
     TrackInfoReceived(Result<crate::lastfm::Track, String>),
-    ImageBytesReceived(Result<Vec<u8>, String>),
+    ImageBytesReceived(Result<(String, Vec<u8>), String>),
     MprisTrackChanged(TrackInfo),
     MprisStatusChanged(bool),
     NoOp,
