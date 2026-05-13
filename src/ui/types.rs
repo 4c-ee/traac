@@ -23,6 +23,7 @@ pub enum Message {
     ImageBytesReceived(Result<(String, Vec<u8>), String>),
     MprisTrackChanged(TrackInfo),
     MprisStatusChanged(bool),
+    MprisStopped,
     NoOp,
     TrayEvent(TrayIconEvent),
     TrayMenuEvent(MenuEvent),

@@ -176,8 +176,11 @@ fn mpris_subscription(ignored_players: Vec<String>) -> Subscription<Message> {
                 MprisEvent::Playing => {
                     Message::MprisStatusChanged(true)
                 }
-                MprisEvent::Paused | MprisEvent::Stopped => {
+                MprisEvent::Paused => {
                     Message::MprisStatusChanged(false)
+                }
+                MprisEvent::Stopped => {
+                    Message::MprisStopped
                 }
                 _ => Message::NoOp,
             }

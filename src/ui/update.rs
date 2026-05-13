@@ -126,6 +126,15 @@ pub fn update(state: &mut App, message: Message) -> Task<Message> {
             }
             Task::none()
         }
+        Message::MprisStopped => {
+            state.current_track = None;
+            state.track_image_bytes = None;
+            state.track_total_played_secs = 0;
+            state.last_resume_time = None;
+            state.now_playing_sent = false;
+            state.scrobble_sent = false;
+            Task::none()
+        }
         Message::AuthUrl(url) => {
             state.auth_url = Some(url);
             Task::none()
