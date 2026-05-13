@@ -11,7 +11,7 @@ pub struct Track {
     pub url: String,
     pub listeners: String,
     pub playcount: String,
-    pub duration: Option<u64>,
+    pub duration: Option<String>,
     pub album: Option<AlbumInfo>,
     pub toptags: Option<TopTags>,
     pub wiki: Option<Wiki>,
