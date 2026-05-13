@@ -53,6 +53,7 @@ pub enum Message {
 
 pub struct App {
     config: Config,
+    parsed_colors: ParsedColors,
     current_track: Option<TrackInfo>,
     lastfm: Option<Arc<LastFm>>,
     auth_token: Option<last_fm_rs::AuthToken>,
@@ -72,9 +73,32 @@ pub struct App {
     _tray_icon: Arc<TrayIcon>,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ParsedColors {
+    base: Color,
+    slightly_lighter: Color,
+    accent_grey: Color,
+    bright: Color,
+    text: Color,
+}
+
+impl ParsedColors {
+    fn from_config(config: &Config) -> Self {
+        let colors = &config.ui.color_scheme;
+        Self {
+            base: colors.base.parse().unwrap_or(Color::BLACK),
+            slightly_lighter: colors.slightly_lighter.parse().unwrap_or(Color::from_rgb(0.2, 0.2, 0.3)),
+            accent_grey: colors.accent_grey.parse().unwrap_or(Color::from_rgb(0.4, 0.4, 0.5)),
+            bright: colors.bright.parse().unwrap_or(Color::WHITE),
+            text: colors.text.parse().unwrap_or(Color::WHITE),
+        }
+    }
+}
+
 impl App {
     fn new(config_path: Option<std::path::PathBuf>, tray_icon: Arc<TrayIcon>) -> Self {
         let config = Config::load(config_path).unwrap_or_default();
+        let parsed_colors = ParsedColors::from_config(&config);
         let lastfm = if let (Some(session_key), api_key, api_secret) = (
             &config.lastfm.session_key,
             &config.lastfm.api_key,
@@ -93,6 +117,7 @@ impl App {
 
         Self {
             config,
+            parsed_colors,
             current_track: None,
             lastfm,
             auth_token: None,
@@ -666,12 +691,11 @@ fn view(state: &App) -> Element<'_, Message> {
             .height(0)
             .into();
     }
-    let colors = &state.config.ui.color_scheme;
-    let base_color: Color = colors.base.parse().unwrap_or(Color::BLACK);
-    let _slightly_lighter: Color = colors.slightly_lighter.parse().unwrap_or(Color::from_rgb(0.2, 0.2, 0.3));
-    let accent_grey: Color = colors.accent_grey.parse().unwrap_or(Color::from_rgb(0.4, 0.4, 0.5));
-    let bright: Color = colors.bright.parse().unwrap_or(Color::WHITE);
-    let text_color: Color = colors.text.parse().unwrap_or(Color::WHITE);
+    let colors = &state.parsed_colors;
+    let base_color = colors.base;
+    let accent_grey = colors.accent_grey;
+    let bright = colors.bright;
+    let text_color = colors.text;
 
     let mut content = column![].spacing(4);
 
