@@ -299,8 +299,19 @@ fn handle_track_change(state: &mut App, track: TrackInfo) -> Task<Message> {
         let notification_key = format!("{} - {}", track.artist, track.title);
         if state.last_notified_track.as_ref().map_or(true, |last| last != &notification_key) {
             state.last_notified_track = Some(notification_key.clone());
+
+            let art_path = if let Some(url) = &track.art_url {
+                if url.starts_with("file://") {
+                    Some(url.trim_start_matches("file://").to_string())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             tasks.push(Task::perform(
-                send_notification(track.artist.clone(), track.title.clone(), track.album.clone()),
+                send_notification(track.artist.clone(), track.title.clone(), track.album.clone(), art_path),
                 |res| match res {
                     Ok(_) => Message::NoOp,
                     Err(e) => Message::AppError(e.to_string()),
@@ -351,11 +362,14 @@ async fn send_scrobble(lastfm: Arc<LastFm>, track: TrackInfo) -> Result<(), Traa
         .map_err(|e| TraacError::LastFmApi(e))
 }
 
-async fn send_notification(artist: String, title: String, _album: Option<String>) -> Result<(), TraacError> {
+async fn send_notification(artist: String, title: String, _album: Option<String>, image_path: Option<String>) -> Result<(), TraacError> {
     let mut notification = Notification::new();
     notification.summary("Now Playing");
     notification.body(&format!("{} - {}", artist, title));
     notification.appname("traac");
+    if let Some(path) = image_path {
+        notification.icon(&path);
+    }
 
     notification.show().map_err(|e| TraacError::Other(e.to_string()))?;
     Ok(())
