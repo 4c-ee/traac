@@ -65,6 +65,22 @@ pub fn view(state: &App) -> Element<'_, Message> {
                     .color(Color::from_rgb(0.5, 0.8, 0.5))
             );
         }
+
+        if state.config.general.scrobble_sanity_check {
+            if state.track_verified {
+                content = content.push(
+                    text("Verified on Last.fm")
+                        .size(10)
+                        .color(Color::from_rgb(0.5, 0.8, 0.5))
+                );
+            } else {
+                content = content.push(
+                    text("Track verification pending/failed")
+                        .size(10)
+                        .color(accent_grey)
+                );
+            }
+        }
     } else {
         content = content.push(text("No track playing").size(14).color(accent_grey));
     }
