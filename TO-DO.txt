@@ -1,52 +1,47 @@
-traac - Expansion Points & Next Steps
-======================================
+# traac TO-DO List
 
-IMPROVEMENTS
--------------------------------
-- [x] **Now Playing Scrobble**: Surfaced errors in UI and improved handling.
-- [ ] **Moving to Tray App**: Make it collapse into a tray app and only show when clicked.
-- [ ] **Track change detection**: Use MPRIS `Player.events()` for event-driven track
-changes instead of polling (requires async integration with Iced).
-- [x] **Album art**: Fetch and display album art from the MPRIS art_url metadata
-field (optional, shown if available).
-- [ ] **Sanity Check**: Against last.fm before scrobbling. Should be optional.
-- [x] **User-defined ignore**: Added UI button to ignore/unignore current player.
-- [x] **Notification support**: Add optional desktop notification (via notify-rust or
-the overlay itself) when a track changes.
-- [x] **Window theming**: Use all five Catppuccin color fields from ColorScheme
-(base, slightly_lighter, accent_grey, bright, text) in the UI.
-- [x] **Error display**: Show connection errors (no player, auth failure) gracefully
-in the overlay rather than crashing.
+## Code Quality & Refactoring
+- [ ] **UI/Logic Separation**: Split `src/ui/app.rs` (currently >700 lines) into smaller, more manageable modules (e.g., `state.rs`, `view.rs`, `update.rs`).
+- [ ] **Structured Error Handling**: Replace `Box<dyn std::error::Error>` and string-based errors with a structured error type using `thiserror`.
+- [ ] **Config Path Management**: Fix `Config::save()` to respect the custom path used during `Config::load()`, rather than always defaulting to `~/.config/traac/config.toml`.
+- [ ] **Remove Dead Code**: Remove or integrate `src/ui/application.rs` if it's no longer used.
+- [ ] **Color Parsing Optimization**: Parse color strings from the config once into `iced::Color` and store them in the `App` state, instead of parsing them on every `view()` call.
+- [ ] **Consistent Async Interface**: Refactor `LastFm` and `mpris` modules to use a more consistent async pattern across the board.
 
-ARCHITECTURE / POLISH (Lower Priority)
---------------------------------------
-- [ ] **Daemon mode**: Consider using `iced_layershell::daemon()` instead of
-`application()` for multi-window support (e.g., popup + settings window).
-- [x] **CLI flags**: Added --config and --debug flags using clap.
-- [x] **Logging**: Added env_logger and log crates for debug output.
-- [ ] **Packaging**: Create a release workflow, will be distributed via AUR only.
+## Performance & Optimization
+- [ ] **Minimize Polling**: Reduce reliance on the 5-second `Tick` for track updates by better leveraging MPRIS D-Bus events. Ensure `Tick` is only used for time-elapsed scrobble checks.
+- [ ] **Efficient Tray Handling**: Replace the manual tray thread/sleep loop with a more native async integration if possible.
+- [ ] **Image Cache**: Implement a simple cache for album art to avoid re-fetching or re-processing the same images frequently.
 
-COMPLETED
-------------------------------
-- [x] **Margin calculation**: The layer shell margin is set as (y, x, y, x) but may
-not visually anchor correctly for all four positions. Test and fix margin
-tuple order: it should be (top, right, bottom, left), not just x/y.
-- [x] **Anchor + margin interaction**: When anchored to e.g. BottomRight, the margin
-should offset from bottom and right edges. Currently the same x/y values are
-applied to both top/bottom and left/right. Need position-aware margin logic.
-- [x] **Config parse error handling**: If config.toml exists but is malformed, the
-app silently falls back to defaults. Log a warning or surface the error.
-- [x] **Async runtime**: last-fm-rs requires async (tokio). Iced uses its own async
-runtime. Need to ensure HTTP calls from the scrobbler don't block the UI.
-Either use `iced::Task::perform()` or spawn tasks in the update loop.
-- [x] **Review Last.fm authentication flow**: Currently, nothing happens on startup. Should open browser for auth and get session token.
-- [x] **MPRIS polling loop**: Add a subscription/poll loop in the Iced app that
-periodically checks `mpris::get_current_track()` and detects track changes.
-- [x] **Now Playing update**: On track change, call `lastfm.update_now_playing()`
-to push "now playing" to Last.fm.
-- [x] **Scrobbling**: After a track plays for >= 50% of its duration (or 4 minutes,
-per Last.fm rules), submit a scrobble via `lastfm.scrobble()`.
-- [x] **Track info in UI**: Display the current track (artist, title, album) in the
-overlay window instead of the placeholder text.
-- [x] **Config save hook**: After a successful auth, persist the new session key with
-`Config::save()`. Also save any in-app settings changes.
+## Feature Requests
+- [ ] **Multi-Player Support**: Allow users to see and switch between multiple active MPRIS players instead of just picking the first one.
+- [ ] **Scrobble History**: Add a view to see recently scrobbled tracks.
+- [ ] **Lyrics Integration**: Fetch and display lyrics for the currently playing track.
+- [ ] **Interactive Config UI**: Add a dedicated settings view within the app to edit `config.toml` options (colors, position, ignored players) visually.
+- [ ] **Systemd/Auto-start**: Provide a template for a systemd user service or integration with desktop auto-start.
+- [ ] **More UI Themes**: Include pre-set color schemes (e.g., Nord, Gruvbox) in addition to the default Catppuccin.
+- [ ] **Compact Mode**: A "mini-player" mode that only shows the track title and artist in a very small window.
+
+## Bugs & Minor Improvements
+- [ ] **Documentation**: Update README with anything else relevant to the user; how to initialize tray apps, etc.
+- [ ] **Precision in Duration**: Ensure `mpris` duration calculations (microseconds to seconds) don't cause issues with extremely short tracks.
+- [ ] **Window Visibility**: Verify if returning an empty/zero-size container in `view()` when hidden is the most efficient way to hide the layer shell window.
+- [ ] **Notification Content**: Add album art to desktop notifications if available.
+- [ ] **Sanity Check Feedback**: Provide UI feedback when a track is being "sanity checked" or if it fails the check.
+- [ ] Now Playing should stop when exited or stopped playing, currently relies on
+e-out on lastfm itself
+- [ ] Ignore Player button does not recognize new players
+- [ ] Ignore Player button should automatically update the now playing to the next player
+- [ ] Failure to parse image response, sample response looks like this:
+Response:
+ {"track":{"name":"SOS!!!","mbid":"0dd755be-a583-4b75-8119-375525688c58","url":"https://www.
+ last.fm/music/beansclub/_/SOS%21%21%21","duration":"226000","streamable":{"#text":"0","full
+ track":"0"},"listeners":"319","playcount":"993","artist":{"name":"beansclub","mbid":"642508
+ a1-a4dd-4b8d-b64e-44ed577a63b4","url":"https://www.last.fm/music/beansclub"},"album":{"arti
+ st":"beansclub","title":"club","url":"https://www.last.fm/music/beansclub/club","image":[{"
+ #text":"https://lastfm.freetls.fastly.net/i/u/34s/27710c5157092c884261d8911ce79d30.png","si
+ ze":"small"},{"#text":"https://lastfm.freetls.fastly.net/i/u/64s/27710c5157092c884261d8911c
+ e79d30.png","size":"medium"},{"#text":"https://lastfm.freetls.fastly.net/i/u/174s/27710c515
+ 7092c884261d8911ce79d30.png","size":"large"},{"#text":"https://lastfm.freetls.fastly.net/i/
+ u/300x300/27710c5157092c884261d8911ce79d30.png","size":"extralarge"}]},"toptags":{"tag":[]}
+ }}
