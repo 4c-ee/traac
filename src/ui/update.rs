@@ -4,13 +4,14 @@ use chrono::Utc;
 use notify_rust::Notification;
 use crate::ui::state::App;
 use crate::ui::types::Message;
-use crate::mpris::{find_player_with_ignore, get_current_track, is_playing, TrackInfo};
+use crate::mpris::TrackInfo;
 use crate::lastfm::LastFm;
+use crate::error::TraacError;
 
 pub fn update(state: &mut App, message: Message) -> Task<Message> {
     match message {
         Message::Tick => {
-                if state.auth_token.is_some() && state.config.lastfm.session_key.is_none() {
+            if state.auth_token.is_some() && state.config.lastfm.session_key.is_none() {
                 let now = Utc::now();
                 let should_attempt = match state.last_auth_attempt {
                     Some(last_attempt) => {
@@ -28,7 +29,7 @@ pub fn update(state: &mut App, message: Message) -> Task<Message> {
                                 complete_authentication(lastfm, token),
                                 |result| match result {
                                     Ok((session_key, username)) => Message::AuthSessionComplete(Ok((session_key, username))),
-                                    Err(e) => Message::AuthSessionComplete(Err(e)),
+                                    Err(e) => Message::AuthSessionComplete(Err(e.to_string())),
                                 }
                             );
                         }
@@ -48,7 +49,7 @@ pub fn update(state: &mut App, message: Message) -> Task<Message> {
                         get_auth_token(lastfm_arc),
                         |result| match result {
                             Ok((token, url)) => Message::AuthComplete(Ok((token, url))),
-                            Err(e) => Message::AuthComplete(Err(e)),
+                            Err(e) => Message::AuthComplete(Err(e.to_string())),
                         }
                     );
                 }
@@ -67,56 +68,37 @@ pub fn update(state: &mut App, message: Message) -> Task<Message> {
                 }
             }
             
-            if let Ok(player) = find_player_with_ignore(&state.config.general.ignored_players) {
-                let track = get_current_track(&player);
-                let is_playing_flag = is_playing(&player);
+            // Scrobble check
+            if let Some(track) = &state.current_track {
+                if !state.scrobble_sent && state.config.general.scrobble_enabled {
+                    let now = Utc::now();
+                    let elapsed = state.track_total_played_secs + 
+                        state.last_resume_time.map_or(0, |last| now.signed_duration_since(last).num_seconds() as u64);
 
-                if let Some(track) = track {
-                    let track_changed = match &state.current_track {
-                        Some(current) => {
-                            current.artist != track.artist ||
-                            current.title != track.title ||
-                            current.album != track.album
-                        }
-                        None => true,
-                    };
+                    if let Some(track_duration_secs) = track.duration {
+                        // Sanity check: only scrobble if verified (if sanity check enabled)
+                        let can_scrobble = if state.config.general.scrobble_sanity_check {
+                            state.track_verified
+                        } else {
+                            true
+                        };
 
-                    if track_changed {
-                        return handle_track_change(state, track);
-                    } else if is_playing_flag {
-                        // Update elapsed time for scrobble check
-                        let now = Utc::now();
-                        let elapsed = state.track_total_played_secs + 
-                            state.last_resume_time.map_or(0, |last| now.signed_duration_since(last).num_seconds() as u64);
+                        if can_scrobble {
+                            // Last.fm rules: scrobble at 50% duration OR 240s (4 min), whichever is LESS
+                            let scrobble_threshold = {
+                                let half_duration = track_duration_secs / 2;
+                                let max_threshold = 240; // 4 minutes cap
+                                std::cmp::min(half_duration, max_threshold)
+                            };
 
-                        if let Some(track_duration_secs) = track.duration {
-                            if !state.scrobble_sent && state.config.general.scrobble_enabled {
-                                // Sanity check: only scrobble if verified (if sanity check enabled)
-                                let can_scrobble = if state.config.general.scrobble_sanity_check {
-                                    state.track_verified
-                                } else {
-                                    true
-                                };
-
-                                if can_scrobble {
-                                    // Last.fm rules: scrobble at 50% duration OR 240s (4 min), whichever is LESS
-                                    let scrobble_threshold = {
-                                        let half_duration = track_duration_secs / 2;
-                                        let max_threshold = 240; // 4 minutes cap
-                                        std::cmp::min(half_duration, max_threshold)
-                                    };
-
-                                    let should_scrobble = elapsed >= scrobble_threshold;
-
-                                    if should_scrobble && state.lastfm.is_some() {
-                                        state.scrobble_sent = true;
-                                        if let Some(lastfm) = state.lastfm.clone() {
-                                            return Task::perform(
-                                                send_scrobble(lastfm, track),
-                                                Message::ScrobbleSent
-                                            );
-                                        }
-                                    }
+                            if elapsed >= scrobble_threshold && state.lastfm.is_some() {
+                                state.scrobble_sent = true;
+                                if let Some(lastfm) = state.lastfm.clone() {
+                                    let track_clone = track.clone();
+                                    return Task::perform(
+                                        send_scrobble(lastfm, track_clone),
+                                        |res| Message::ScrobbleSent(res.map_err(|e| e.to_string()))
+                                    );
                                 }
                             }
                         }
@@ -176,7 +158,7 @@ pub fn update(state: &mut App, message: Message) -> Task<Message> {
                         complete_authentication(lastfm, token_clone),
                         |result| match result {
                             Ok((session_key, username)) => Message::AuthSessionComplete(Ok((session_key, username))),
-                            Err(e) => Message::AuthSessionComplete(Err(e)),
+                            Err(e) => Message::AuthSessionComplete(Err(e.to_string())),
                         }
                     );
                 }
@@ -260,7 +242,10 @@ pub fn update(state: &mut App, message: Message) -> Task<Message> {
                         if let Some(image) = album.image.last() {
                             let url = image.url.clone();
                             if !url.is_empty() {
-                                return Task::perform(fetch_image_bytes(url), Message::ImageBytesReceived);
+                                return Task::perform(
+                                    fetch_image_bytes(url), 
+                                    |res| Message::ImageBytesReceived(res.map_err(|e| e.to_string()))
+                                );
                             }
                         }
                     }
@@ -305,19 +290,24 @@ fn handle_track_change(state: &mut App, track: TrackInfo) -> Task<Message> {
             state.last_notified_track = Some(notification_key.clone());
             tasks.push(Task::perform(
                 send_notification(track.artist.clone(), track.title.clone(), track.album.clone()),
-                |_| Message::Tick
+                |res| match res {
+                    Ok(_) => Message::NoOp,
+                    Err(e) => Message::AppError(e.to_string()),
+                }
             ));
         }
     }
 
     if let Some(lastfm) = state.lastfm.clone() {
+        let track_clone1 = track.clone();
         tasks.push(Task::perform(
-            send_now_playing(lastfm.clone(), track.clone()),
-            Message::NowPlayingSent
+            send_now_playing(lastfm.clone(), track_clone1),
+            |res| Message::NowPlayingSent(res.map_err(|e| e.to_string()))
         ));
+        let track_clone2 = track.clone();
         tasks.push(Task::perform(
-            fetch_track_info(lastfm, track),
-            Message::TrackInfoReceived
+            fetch_track_info(lastfm, track_clone2),
+            |res| Message::TrackInfoReceived(res.map_err(|e| e.to_string()))
         ));
     }
 
@@ -328,50 +318,46 @@ fn handle_track_change(state: &mut App, track: TrackInfo) -> Task<Message> {
     }
 }
 
-async fn fetch_track_info(lastfm: Arc<LastFm>, track: TrackInfo) -> Result<crate::lastfm::Track, String> {
-    lastfm.get_track_info(&track.artist, &track.title)
-        .await
-        .map_err(|e| format!("Track info error: {}", e))
+async fn fetch_track_info(lastfm: Arc<LastFm>, track: TrackInfo) -> Result<crate::lastfm::Track, TraacError> {
+    lastfm.get_track_info(&track.artist, &track.title).await
 }
 
-async fn fetch_image_bytes(url: String) -> Result<Vec<u8>, String> {
-    let response = reqwest::get(url).await.map_err(|e| e.to_string())?;
-    let bytes = response.bytes().await.map_err(|e| e.to_string())?;
+async fn fetch_image_bytes(url: String) -> Result<Vec<u8>, TraacError> {
+    let response = reqwest::get(url).await?;
+    let bytes = response.bytes().await?;
     Ok(bytes.to_vec())
 }
 
-async fn send_now_playing(lastfm: Arc<LastFm>, track: TrackInfo) -> Result<(), String> {
+async fn send_now_playing(lastfm: Arc<LastFm>, track: TrackInfo) -> Result<(), TraacError> {
     lastfm.update_now_playing(&track.artist, &track.title, track.album.as_deref())
         .await
-        .map_err(|e| format!("Now playing error: {}", e))
+        .map_err(|e| TraacError::LastFmApi(e))
 }
 
-async fn send_scrobble(lastfm: Arc<LastFm>, track: TrackInfo) -> Result<(), String> {
+async fn send_scrobble(lastfm: Arc<LastFm>, track: TrackInfo) -> Result<(), TraacError> {
     lastfm.scrobble(&track.artist, &track.title, track.album.as_deref())
         .await
-        .map_err(|e| format!("Scrobble error: {}", e))
+        .map_err(|e| TraacError::LastFmApi(e))
 }
 
-async fn send_notification(artist: String, title: String, _album: Option<String>) -> Result<(), String> {
+async fn send_notification(artist: String, title: String, _album: Option<String>) -> Result<(), TraacError> {
     let mut notification = Notification::new();
     notification.summary("Now Playing");
     notification.body(&format!("{} - {}", artist, title));
     notification.appname("traac");
 
-    let _ = notification.show();
+    notification.show().map_err(|e| TraacError::Other(e.to_string()))?;
     Ok(())
 }
 
-async fn get_auth_token(lastfm: Arc<LastFm>) -> Result<(last_fm_rs::AuthToken, String), String> {
-    let token = lastfm.get_token().await.map_err(|e| format!("get_token error: {}", e))?;
-    let url = lastfm.get_auth_url(&token).map_err(|e| format!("get_auth_url error: {}", e))?;
+async fn get_auth_token(lastfm: Arc<LastFm>) -> Result<(last_fm_rs::AuthToken, String), TraacError> {
+    let token = lastfm.get_token().await?;
+    let url = lastfm.get_auth_url(&token)?;
     Ok((token, url))
 }
 
-async fn complete_authentication(lastfm: Arc<LastFm>, token: last_fm_rs::AuthToken) -> Result<(String, String), String> {
-    let session = lastfm.get_session(&token).await.map_err(|e| {
-        format!("{:?}", e)
-    })?;
+async fn complete_authentication(lastfm: Arc<LastFm>, token: last_fm_rs::AuthToken) -> Result<(String, String), TraacError> {
+    let session = lastfm.get_session(&token).await?;
     let session_key = session.key;
     let username = session.name;
     Ok((session_key, username))
