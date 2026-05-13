@@ -27,7 +27,7 @@ impl TrackInfo {
 
         let album = metadata.album_name().map(|s| s.to_string());
 
-    let duration = metadata.length_in_microseconds().map(|us| us / 1_000_000);
+    let duration = metadata.length_in_microseconds().map(|us| (us as f64 / 1_000_000.0).round() as u64);
 
     let art_url = metadata.art_url().map(|s| s.to_string());
 
