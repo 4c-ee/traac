@@ -19,6 +19,7 @@ pub enum Message {
     AppError(String),
     SendNotification(String, String),
     ToggleIgnore(String),
+    PlayersListReceived(Result<Vec<String>, String>),
     TrackInfoReceived(Result<crate::lastfm::Track, String>),
     ImageBytesReceived(Result<(String, Vec<u8>), String>),
     MprisTrackChanged(TrackInfo),

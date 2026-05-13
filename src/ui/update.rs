@@ -4,13 +4,20 @@ use chrono::Utc;
 use notify_rust::Notification;
 use crate::ui::state::App;
 use crate::ui::types::Message;
-use crate::mpris::TrackInfo;
+use crate::mpris::{list_all_players, TrackInfo};
 use crate::lastfm::LastFm;
 use crate::error::TraacError;
 
 pub fn update(state: &mut App, message: Message) -> Task<Message> {
     match message {
         Message::Tick => {
+            let mut tasks = Vec::new();
+
+            tasks.push(Task::perform(
+                async { list_all_players() },
+                |res| Message::PlayersListReceived(res.map_err(|e| e.to_string()))
+            ));
+
             if state.auth_token.is_some() && state.config.lastfm.session_key.is_none() {
                 let now = Utc::now();
                 let should_attempt = match state.last_auth_attempt {
@@ -25,13 +32,13 @@ pub fn update(state: &mut App, message: Message) -> Task<Message> {
                     state.auth_attempts += 1;
                     if let Some(lastfm) = state.lastfm.clone() {
                         if let Some(token) = state.auth_token.clone() {
-                            return Task::perform(
+                            tasks.push(Task::perform(
                                 complete_authentication(lastfm, token),
                                 |result| match result {
                                     Ok((session_key, username)) => Message::AuthSessionComplete(Ok((session_key, username))),
                                     Err(e) => Message::AuthSessionComplete(Err(e.to_string())),
                                 }
-                            );
+                            ));
                         }
                     }
                 }
@@ -45,13 +52,13 @@ pub fn update(state: &mut App, message: Message) -> Task<Message> {
                     );
                     let lastfm_arc = Arc::new(lastfm);
                     state.lastfm = Some(lastfm_arc.clone());
-                    return Task::perform(
+                    tasks.push(Task::perform(
                         get_auth_token(lastfm_arc),
                         |result| match result {
                             Ok((token, url)) => Message::AuthComplete(Ok((token, url))),
                             Err(e) => Message::AuthComplete(Err(e.to_string())),
                         }
-                    );
+                    ));
                 }
             }
 
@@ -95,15 +102,26 @@ pub fn update(state: &mut App, message: Message) -> Task<Message> {
                                 state.scrobble_sent = true;
                                 if let Some(lastfm) = state.lastfm.clone() {
                                     let track_clone = track.clone();
-                                    return Task::perform(
+                                    tasks.push(Task::perform(
                                         send_scrobble(lastfm, track_clone),
                                         |res| Message::ScrobbleSent(res.map_err(|e| e.to_string()))
-                                    );
+                                    ));
                                 }
                             }
                         }
                     }
                 }
+            }
+
+            if !tasks.is_empty() {
+                return Task::batch(tasks);
+            }
+
+            Task::none()
+        }
+        Message::PlayersListReceived(result) => {
+            if let Ok(players) = result {
+                state.all_players = players;
             }
             Task::none()
         }

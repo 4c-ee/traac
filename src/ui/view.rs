@@ -2,7 +2,6 @@ use iced::widget::{column, container, text, button, row, image};
 use iced::{Color, Element, Length};
 use crate::ui::state::App;
 use crate::ui::types::Message;
-use crate::mpris::find_player_with_ignore;
 
 pub fn view(state: &App) -> Element<'_, Message> {
     if !state.visible {
@@ -17,7 +16,7 @@ pub fn view(state: &App) -> Element<'_, Message> {
     let bright = colors.bright;
     let text_color = colors.text;
 
-    let mut content = column![].spacing(4);
+    let mut content = column![].spacing(8);
 
     if let Some(track) = &state.current_track {
         let mut track_info = column![
@@ -51,17 +50,6 @@ pub fn view(state: &App) -> Element<'_, Message> {
         track_row = track_row.push(track_info);
         content = content.push(track_row);
 
-        if let Ok(player) = find_player_with_ignore(&[]) {
-            let identity = player.identity().to_string();
-            let is_ignored = state.config.general.ignored_players.contains(&identity);
-            
-            content = content.push(
-                button(text(if is_ignored { "Unignore Player" } else { "Ignore Player" }))
-                    .on_press(Message::ToggleIgnore(identity))
-                    .padding(5)
-            );
-        }
-
         if state.now_playing_sent {
             content = content.push(
                 text("Now Playing sent")
@@ -79,6 +67,22 @@ pub fn view(state: &App) -> Element<'_, Message> {
         }
     } else {
         content = content.push(text("No track playing").size(14).color(accent_grey));
+    }
+
+    // Players list
+    if !state.all_players.is_empty() {
+        let mut players_col = column![text("Players:").size(12).color(accent_grey)].spacing(4);
+        for player in &state.all_players {
+            let is_ignored = state.config.general.ignored_players.contains(player);
+            let player_row = row![
+                text(player).size(12).color(if is_ignored { accent_grey } else { text_color }),
+                button(text(if is_ignored { "Unignore" } else { "Ignore" }))
+                    .on_press(Message::ToggleIgnore(player.clone()))
+                    .padding(2)
+            ].spacing(8);
+            players_col = players_col.push(player_row);
+        }
+        content = content.push(players_col);
     }
 
     if let Some(error) = &state.error_message {
