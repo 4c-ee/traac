@@ -41,15 +41,16 @@ impl TrackInfo {
     }
 }
 
-pub fn find_player() -> Result<Player, String> {
+use crate::error::{TraacError, Result as TraacResult};
+
+pub fn find_player() -> TraacResult<Player> {
     find_player_with_ignore(&[])
 }
 
-pub fn find_player_with_ignore(ignored: &[String]) -> Result<Player, String> {
-    let finder = PlayerFinder::new().map_err(|e| format!("D-Bus error: {}", e))?;
+pub fn find_player_with_ignore(ignored: &[String]) -> TraacResult<Player> {
+    let finder = PlayerFinder::new()?;
     let all_players = finder
-        .find_all()
-        .map_err(|e| format!("No player found: {}", e))?;
+        .find_all()?;
     
     for player in all_players {
         if !is_player_ignored(player.identity(), player.bus_name(), ignored) {
@@ -57,7 +58,7 @@ pub fn find_player_with_ignore(ignored: &[String]) -> Result<Player, String> {
         }
     }
     
-    Err("No non-ignored player found".to_string())
+    Err(TraacError::NoPlayerFound)
 }
 
 fn is_player_ignored(identity: &str, bus_name: &str, ignored: &[String]) -> bool {
@@ -78,11 +79,10 @@ fn is_player_ignored(identity: &str, bus_name: &str, ignored: &[String]) -> bool
     })
 }
 
-pub fn list_all_players() -> Result<Vec<String>, String> {
-    let finder = PlayerFinder::new().map_err(|e| format!("D-Bus error: {}", e))?;
+pub fn list_all_players() -> TraacResult<Vec<String>> {
+    let finder = PlayerFinder::new()?;
     let all_players = finder
-        .find_all()
-        .map_err(|e| format!("No player found: {}", e))?;
+        .find_all()?;
     
     Ok(all_players.iter().map(|p| p.identity().to_string()).collect())
 }

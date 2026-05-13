@@ -1,4 +1,5 @@
 mod config;
+mod error;
 mod lastfm;
 mod mpris;
 mod ui;

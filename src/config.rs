@@ -109,31 +109,24 @@ impl Config {
             .join("config.toml")
     }
 
-    pub fn load(custom_path: Option<PathBuf>) -> std::io::Result<Self> {
+    pub fn load(custom_path: Option<PathBuf>) -> crate::error::Result<Self> {
         let path = custom_path.unwrap_or_else(Self::config_path);
         if !path.exists() {
             return Ok(Config::default());
         }
         let content = std::fs::read_to_string(&path)?;
-        match toml::from_str(&content) {
-            Ok(config) => Ok(config),
-            Err(e) => {
-                eprintln!("Warning: Failed to parse config.toml: {}", e);
-                eprintln!("         Using default configuration.");
-                Ok(Config::default())
-            }
-        }
+        let config = toml::from_str(&content)?;
+        Ok(config)
     }
 
-    pub fn save(&self, custom_path: Option<PathBuf>) -> std::io::Result<()> {
+    pub fn save(&self, custom_path: Option<PathBuf>) -> crate::error::Result<()> {
         let path = custom_path.unwrap_or_else(Self::config_path);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let content = toml::to_string_pretty(self).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, e)
-        })?;
-        std::fs::write(&path, content)
+        let content = toml::to_string_pretty(self)?;
+        std::fs::write(&path, content)?;
+        Ok(())
     }
 }
 

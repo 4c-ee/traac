@@ -107,7 +107,7 @@ impl LastFm {
         Ok(())
     }
 
-    pub async fn get_track_info(&self, artist: &str, track: &str) -> Result<Track, String> {
+    pub async fn get_track_info(&self, artist: &str, track: &str) -> crate::error::Result<Track> {
         let url = format!(
             "https://ws.audioscrobbler.com/2.0/?method=track.getInfo&api_key={}&artist={}&track={}&format=json",
             self.api_key,
@@ -115,11 +115,11 @@ impl LastFm {
             urlencoding::encode(track)
         );
 
-        let resp = reqwest::get(url).await.map_err(|e| e.to_string())?;
-        let text = resp.text().await.map_err(|e| e.to_string())?;
+        let resp = reqwest::get(url).await?;
+        let text = resp.text().await?;
         
         let response: TrackResponse = serde_json::from_str(&text).map_err(|e| {
-            format!("Failed to parse track info: {}. Response: {}", e, text)
+            crate::error::TraacError::Other(format!("Failed to parse track info: {}. Response: {}", e, text))
         })?;
         
         Ok(response.track)

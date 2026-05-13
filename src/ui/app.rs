@@ -141,9 +141,11 @@ impl App {
     }
 }
 
-pub fn run(config_path: Option<std::path::PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
+use crate::error::TraacError;
+
+pub fn run(config_path: Option<std::path::PathBuf>) -> Result<(), TraacError> {
     #[cfg(target_os = "linux")]
-    let _ = gtk::init();
+    let _ = gtk::init().map_err(|e| TraacError::Gtk(e.to_string()))?;
 
     let config = Config::load(config_path.clone()).unwrap_or_default();
     let anchor = match config.ui.position.anchor {
@@ -209,7 +211,8 @@ pub fn run(config_path: Option<std::path::PathBuf>) -> Result<(), Box<dyn std::e
         layer_settings,
         ..Default::default()
     })
-    .run()?;
+    .run()
+    .map_err(|e| TraacError::Other(e.to_string()))?;
 
     Ok(())
 }
