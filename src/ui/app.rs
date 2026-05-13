@@ -53,6 +53,7 @@ pub enum Message {
 
 pub struct App {
     config: Config,
+    config_path: Option<std::path::PathBuf>,
     parsed_colors: ParsedColors,
     current_track: Option<TrackInfo>,
     lastfm: Option<Arc<LastFm>>,
@@ -97,7 +98,7 @@ impl ParsedColors {
 
 impl App {
     fn new(config_path: Option<std::path::PathBuf>, tray_icon: Arc<TrayIcon>) -> Self {
-        let config = Config::load(config_path).unwrap_or_default();
+        let config = Config::load(config_path.clone()).unwrap_or_default();
         let parsed_colors = ParsedColors::from_config(&config);
         let lastfm = if let (Some(session_key), api_key, api_secret) = (
             &config.lastfm.session_key,
@@ -117,6 +118,7 @@ impl App {
 
         Self {
             config,
+            config_path,
             parsed_colors,
             current_track: None,
             lastfm,
@@ -500,7 +502,7 @@ Message::AuthComplete(result) => {
     Task::none()
 }
         Message::SaveConfig => {
-            let _ = state.config.save();
+            let _ = state.config.save(state.config_path.clone());
             Task::none()
         }
 Message::OpenAuthUrl(url) => {
@@ -536,7 +538,7 @@ Message::AuthSessionComplete(result) => {
             lfm = lfm.with_session_key(session_key.clone());
             state.lastfm = Some(Arc::new(lfm));
 
-            match state.config.save() {                Ok(_) => {
+            match state.config.save(state.config_path.clone()) {                Ok(_) => {
                     eprintln!("Config saved successfully");
                     state.error_message = None;
                     state.auth_token = None;
@@ -579,7 +581,7 @@ Message::AuthSessionComplete(result) => {
             } else {
                 state.config.general.ignored_players.push(player_identity);
             }
-            let _ = state.config.save();
+            let _ = state.config.save(state.config_path.clone());
             Task::none()
         }
         Message::Quit => iced::exit(),

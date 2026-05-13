@@ -125,8 +125,8 @@ impl Config {
         }
     }
 
-    pub fn save(&self) -> std::io::Result<()> {
-        let path = Self::config_path();
+    pub fn save(&self, custom_path: Option<PathBuf>) -> std::io::Result<()> {
+        let path = custom_path.unwrap_or_else(Self::config_path);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
